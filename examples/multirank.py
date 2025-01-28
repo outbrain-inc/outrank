@@ -3,8 +3,13 @@ from __future__ import annotations
 import os
 import shutil
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
+from scipy.cluster.hierarchy import dendrogram
+from scipy.cluster.hierarchy import linkage
+
 
 def rbo_score(l1, l2, p=0.9):
     """
@@ -42,109 +47,131 @@ def rbo_score(l1, l2, p=0.9):
 
     return rbo * (1 - p)
 
-# Define the number of top features to consider
-top_n = 10
+if __name__ == '__main__':
 
-# Define different sizes and corresponding folder names
-sizes = [100000, 15000, 20000, 30000, 50000, 70000, 230000, 25000, 35000, 15000]
-input_folders = [f'../examples/df{i+1}' for i in range(10)]
-output_folders = [f'./output_df{i+1}' for i in range(10)]
+    # Define the number of top features to consider
+    top_n = 10
 
-# Initialize a DataFrame to accumulate results
-accumulated_results = pd.DataFrame()
+    # Define different sizes and corresponding folder names
+    sizes = [100000, 15000, 20000, 30000, 50000, 70000, 230000, 25000, 35000, 15000]
+    input_folders = [f'../examples/df{i+1}' for i in range(10)]
+    output_folders = [f'./output_df{i+1}' for i in range(10)]
 
-# Loop over the sizes and folders
-for i, (size, input_folder, output_folder) in enumerate(zip(sizes, input_folders, output_folders), start=1):
-    # Generate data set
-    dataset_id = f'dataset_{i}'  # Identifier for each data set
-    print(f'Generating data set for size {size} with id {dataset_id}')
-    os.system(f'python ../benchmarks/generator_third_order.py --size {size} --output_df_name {input_folder}')
+    # Initialize a DataFrame to accumulate results
+    accumulated_results = pd.DataFrame()
 
-    # Run ranking
-    print(f'Running ranking for data set {input_folder}')
-    os.system(f"""
-        outrank \
-        --task all \
-        --data_path {input_folder} \
-        --data_source csv-raw \
-        --heuristic MI-numba-randomized \
-        --target_ranking_only True \
-        --combination_number_upper_bound 2048 \
-        --num_threads 12 \
-        --output_folder {output_folder} \
-        --subsampling 1
-    """)
+    # Loop over the sizes and folders
+    for i, (size, input_folder, output_folder) in enumerate(zip(sizes, input_folders, output_folders), start=1):
+        # Generate data set
+        dataset_id = f'dataset_{i}'  # Identifier for each data set
+        print(f'Generating data set for size {size} with id {dataset_id}')
+        os.system(f'python ../benchmarks/generator_third_order.py --size {size} --output_df_name {input_folder}')
 
-    # Read and accumulate the results from 'feature_singles.tsv'
-    feature_singles_path = os.path.join(output_folder, 'feature_singles.tsv')
-    if os.path.exists(feature_singles_path):
-        print(f'Reading results from {feature_singles_path}')
-        df_singles = pd.read_csv(feature_singles_path, sep='\t')
-        df_singles['size'] = size  # Include the size information in the results
-        df_singles['dataset_id'] = dataset_id  # Include the dataset identifier
+        # Run ranking
+        print(f'Running ranking for data set {input_folder}')
+        os.system(f"""
+            outrank \
+            --task all \
+            --data_path {input_folder} \
+            --data_source csv-raw \
+            --heuristic MI-numba-randomized \
+            --target_ranking_only True \
+            --combination_number_upper_bound 2048 \
+            --num_threads 12 \
+            --output_folder {output_folder} \
+            --subsampling 1
+        """)
 
-        # Ensure 'Score' column naming correctness
-        score_column = 'Score' if 'Score' in df_singles.columns else 'Score MI-numba-randomized'
+        # Read and accumulate the results from 'feature_singles.tsv'
+        feature_singles_path = os.path.join(output_folder, 'feature_singles.tsv')
+        if os.path.exists(feature_singles_path):
+            print(f'Reading results from {feature_singles_path}')
+            df_singles = pd.read_csv(feature_singles_path, sep='\t')
+            df_singles['size'] = size  # Include the size information in the results
+            df_singles['dataset_id'] = dataset_id  # Include the dataset identifier
 
-        # Include rank based on Score
-        df_singles['rank'] = df_singles[score_column].rank(ascending=False)
+            # Ensure 'Score' column naming correctness
+            score_column = 'Score' if 'Score' in df_singles.columns else 'Score MI-numba-randomized'
 
-        # Clean the Feature names by taking only the part before the "-"
-        df_singles['Feature-clean'] = df_singles['Feature'].apply(lambda x: x.split('-')[0])
+            # Include rank based on Score
+            df_singles['rank'] = df_singles[score_column].rank(ascending=False)
 
-        # Accumulate the results
-        accumulated_results = pd.concat([accumulated_results, df_singles], ignore_index=True)
-    else:
-        print(f'Warning: {feature_singles_path} does not exist!')
+            # Clean the Feature names by taking only the part before the "-"
+            df_singles['Feature-clean'] = df_singles['Feature'].apply(lambda x: x.split('-')[0])
 
-    # Data cleanup
-    print(f'Cleaning up data set {input_folder} and output {output_folder}')
-    if os.path.exists(input_folder):
-        shutil.rmtree(input_folder)
+            # Accumulate the results
+            accumulated_results = pd.concat([accumulated_results, df_singles], ignore_index=True)
+        else:
+            print(f'Warning: {feature_singles_path} does not exist!')
 
-    if os.path.exists(output_folder):
-        shutil.rmtree(output_folder)
+        # Data cleanup
+        print(f'Cleaning up data set {input_folder} and output {output_folder}')
+        if os.path.exists(input_folder):
+            shutil.rmtree(input_folder)
 
-# Compute average and standard deviation of ranks for each feature
-rank_stats = accumulated_results.groupby('Feature-clean').agg(
-    avg_rank=('rank', 'mean'),
-    std_rank=('rank', 'std'),
-).reset_index()
+        if os.path.exists(output_folder):
+            shutil.rmtree(output_folder)
 
-# Save accumulated results and rank statistics
-output_csv_path = './accumulated_feature_singles_results.csv'
-rank_stats_csv_path = './feature_rank_stats.csv'
+    # Compute average and standard deviation of ranks for each feature
+    rank_stats = accumulated_results.groupby('Feature-clean').agg(
+        avg_rank=('rank', 'mean'),
+        std_rank=('rank', 'std'),
+    ).reset_index()
 
-print(f'Saving accumulated results to {output_csv_path}')
-accumulated_results.to_csv(output_csv_path, sep='\t', index=False)
+    # Save accumulated results and rank statistics
+    output_csv_path = './accumulated_feature_singles_results.csv'
+    rank_stats_csv_path = './feature_rank_stats.csv'
 
-print(f'Saving rank statistics to {rank_stats_csv_path}')
-rank_stats.to_csv(rank_stats_csv_path, sep='\t', index=False)
+    print(f'Saving accumulated results to {output_csv_path}')
+    accumulated_results.to_csv(output_csv_path, sep='\t', index=False)
 
-# Compute pairwise similarity using RBO for top n features
-datasets = accumulated_results['dataset_id'].unique()
-similarity_matrix = np.zeros((len(datasets), len(datasets)))
+    print(f'Saving rank statistics to {rank_stats_csv_path}')
+    rank_stats.to_csv(rank_stats_csv_path, sep='\t', index=False)
 
-for i, dataset_i in enumerate(datasets):
-    for j, dataset_j in enumerate(datasets):
-        if i <= j:  # Compute only for upper triangle and diagonal
-            ranks_i = accumulated_results[accumulated_results['dataset_id'] == dataset_i].nlargest(top_n, 'rank').set_index('Feature-clean')['rank']
-            ranks_j = accumulated_results[accumulated_results['dataset_id'] == dataset_j].nlargest(top_n, 'rank').set_index('Feature-clean')['rank']
+    # Compute pairwise similarity using RBO for top n features
+    datasets = accumulated_results['dataset_id'].unique()
+    similarity_matrix = np.zeros((len(datasets), len(datasets)))
 
-            # Align the series
-            common_features = ranks_i.index.intersection(ranks_j.index)
-            if len(common_features) > 0:
-                ranks_i = ranks_i[common_features]
-                ranks_j = ranks_j[common_features]
-                rbo_similarity = round(rbo_score(ranks_i.tolist(), ranks_j.tolist()), 3)
-                similarity_matrix[i, j] = rbo_similarity
-                similarity_matrix[j, i] = rbo_similarity
+    for i, dataset_i in enumerate(datasets):
+        for j, dataset_j in enumerate(datasets):
+            if i <= j:  # Compute only for upper triangle and diagonal
+                ranks_i = accumulated_results[accumulated_results['dataset_id'] == dataset_i].nlargest(top_n, 'rank').set_index('Feature-clean')['rank']
+                ranks_j = accumulated_results[accumulated_results['dataset_id'] == dataset_j].nlargest(top_n, 'rank').set_index('Feature-clean')['rank']
 
-# Convert the similarity matrix to DataFrame for saving
-similarity_df = pd.DataFrame(similarity_matrix, index=datasets, columns=datasets)
-similarity_matrix_path = './dataset_similarity_matrix.tsv'
+                # Align the series
+                common_features = ranks_i.index.intersection(ranks_j.index)
+                if len(common_features) > 0:
+                    ranks_i = ranks_i[common_features]
+                    ranks_j = ranks_j[common_features]
+                    rbo_similarity = round(rbo_score(ranks_i.tolist(), ranks_j.tolist()), 3)
+                    similarity_matrix[i, j] = rbo_similarity
+                    similarity_matrix[j, i] = rbo_similarity
 
-print(f'Saving similarity matrix to {similarity_matrix_path}')
-similarity_df.to_csv(similarity_matrix_path, sep='\t')
+    # Convert the similarity matrix to DataFrame for saving
+    similarity_df = pd.DataFrame(similarity_matrix, index=datasets, columns=datasets)
+    similarity_matrix_path = './dataset_similarity_matrix.tsv'
 
-print('Loop completed successfully, data has been cleaned up, rank statistics, and similarity matrix have been computed.')
+    print(f'Saving similarity matrix to {similarity_matrix_path}')
+    similarity_df.to_csv(similarity_matrix_path, sep='\t')
+
+    # Visualization via dendrogram
+    def plot_dendrogram(similarity_matrix, datasets):
+        # Convert similarity matrix to distance matrix
+        distance_matrix = 1 - similarity_matrix
+
+        # Perform hierarchical/agglomerative clustering
+        linkage_matrix = linkage(distance_matrix, 'ward')
+
+        # Plot the dendrogram
+        plt.figure(figsize=(10, 7))
+        dendrogram(linkage_matrix, labels=datasets, leaf_rotation=90)
+        plt.title('Dendrogram of Dataset Similarities')
+        plt.xlabel('Dataset')
+        plt.ylabel('Distance')
+        plt.tight_layout()
+        plt.savefig('Dendrogram_all.pdf', dpi=300)
+
+    print('Plotting dendrogram...')
+    plot_dendrogram(similarity_matrix, datasets)
+
+    print('Loop completed successfully, data has been cleaned up, rank statistics, and similarity matrix have been computed.')
