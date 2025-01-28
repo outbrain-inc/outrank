@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(mes
 logger = logging.getLogger('syn-logger')
 
 # Configuration constants
-DATA_PATH = os.path.expanduser('~/datasets/blush')
+DATA_PATH = os.path.expanduser('~/datasets/toy')
 MODEL_SPEC_DIR = 'model_spec_dir'
 LABEL_COLUMN_NAME = 'label'
 HEURISTIC = 'surrogate-SGD'
