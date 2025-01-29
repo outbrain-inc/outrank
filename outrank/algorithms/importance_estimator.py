@@ -61,7 +61,7 @@ def numba_mi(vector_first: np.ndarray, vector_second: np.ndarray, heuristic: str
         else:
             vector_first = np.apply_along_axis(lambda x: np.abs(np.max(x) - np.sum(x)), 1, vector_first).reshape(-1)
     except:
-        logger.warning('Reshaping for MI computation in place - you are considering many-one mapping')
+        pass
 
     return ranking_mi_numba.mutual_info_estimator_numba(
         vector_first.astype(np.int32),
