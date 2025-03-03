@@ -628,7 +628,7 @@ def estimate_importances_minibatches(
 
     if file_extension == '.gz':
         file_stream = gzip.open(input_file, 'rt', encoding=data_encoding)
-    elif file_extension == 'zst':
+    elif file_extension == '.zst':
         file_stream = zstd.open(input_file, 'rt', encoding=data_encoding)
     else:
         file_stream = open(input_file, encoding=data_encoding)
