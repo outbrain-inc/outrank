@@ -58,7 +58,7 @@ location = {Singapore, Singapore},
 series = {RecSys '23}
 }
 
-@article{krlj2023DrifterEO,
+@article{skrlj2023DrifterEO,
   title={Drifter: Efficient Online Feature Monitoring for Improved Data Integrity in Large-Scale Recommendation Systems},
   author={Bla{\vz} {\vS}krlj and Nir Ki-Tov and Lee Edelist and Natalia Silberstein and Hila Weisman-Zohar and Bla{\vz} Mramor and Davorin Kopic and Naama Ziporin},
   journal={ArXiv},
