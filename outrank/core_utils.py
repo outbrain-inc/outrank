@@ -276,6 +276,19 @@ def read_column_names(mapping_file: str) -> list[str]:
     return columns
 
 
+def identify_data_file_type(data_path):
+
+    all_files  = set(list(glob.glob(os.path.join(data_path, '*'))))
+    gz_pname, zst_pname = 'data.vw.gz', 'data.vw.zst'
+    if gz_pname in ''.join(all_files):
+        return os.path.join(data_path, gz_pname)
+    elif zst_pname in ''.join(all_files):
+        return os.path.join(data_path, zst_pname)
+    else:
+        raise NotImplementedError('Please provide a valid data type .. (gz, zst)')
+
+
+
 def parse_ob_vw_feature_information(data_path) -> DatasetInformationStorage:
     """A generic parser of ob-based data"""
 
@@ -286,7 +299,7 @@ def parse_ob_vw_feature_information(data_path) -> DatasetInformationStorage:
     # We establish column order here
     column_names = ['label'] + list(fw_map.values())
 
-    data_path = os.path.join(data_path, 'data.vw.gz')
+    data_path = identify_data_file_type(data_path)
     col_delimiter = None
     encoding = 'utf-8'
 
