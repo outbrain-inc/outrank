@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import gzip
+import zstandard as zstd
 
 from outrank.algorithms.importance_estimator import rank_features_3MR
 from outrank.core_ranking import estimate_importances_minibatches
@@ -299,3 +301,13 @@ def outrank_task_conduct_ranking(args: Any) -> None:
     )
 
     os.remove('ranking_checkpoint_tmp.tsv')
+
+def identify_data_file_type(data_path):
+    all_files  = set(list(glob.glob(os.path.join(data_path, '*'))))
+    gz_pname, zst_pname = 'data.vw.gz', 'data.vw.zst'
+    if gz_pname in ''.join(all_files):
+        return os.path.join(data_path, gz_pname)
+    elif zst_pname in ''.join(all_files):
+        return os.path.join(data_path, zst_pname)
+    else:
+        raise NotImplementedError('Please provide a valid data type .. (gz, zst)')
