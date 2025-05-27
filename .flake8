@@ -1,4 +1,4 @@
 [flake8]
 select = ANN001,ANN201,ANN202,ANN203,ANN205
-extend-ignore = ANN101
+extend-ignore = ANN101,F824
 exclude = .git,__pycache__,build,dist,tests,gunicorn.py,swagger.py,main.py
