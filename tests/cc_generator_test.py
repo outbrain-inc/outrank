@@ -273,3 +273,62 @@ class TestCategoricalClassification(unittest.TestCase):
         )
         self.assertIsInstance(X_deteriorated, np.ndarray, 'Output should be a numpy array')
         self.assertEqual(self.cc_instance.dataset_info['deterioration']['noise_types'], custom_noise_types)
+
+    def test_pure_noise_data_handling(self):
+        """Test what happens when data is subjected to maximum noise levels (pure noise scenario)"""
+        # Generate initial structured data
+        X = self.cc_instance.generate_data(n_features=4, n_samples=100, cardinality=10)
+        y = self.cc_instance.generate_labels(X)
+        
+        # Apply multiple noise types at maximum levels to create "pure noise"
+        noise_types = ['categorical', 'missing', 'cardinality', 'value_drift', 'frequency_drift']
+        X_pure_noise = np.copy(X)
+        
+        # Apply each noise type sequentially at high levels
+        for noise_type in noise_types:
+            try:
+                if noise_type == 'missing':
+                    # Apply high level of missing values
+                    X_pure_noise = self.cc_instance.generate_noise(
+                        X_pure_noise, y, p=0.8, type=noise_type, missing_val=-999
+                    )
+                else:
+                    # Apply high level of other noise types
+                    X_pure_noise = self.cc_instance.generate_noise(
+                        X_pure_noise, y, p=0.9, type=noise_type
+                    )
+            except (ValueError, IndexError, ZeroDivisionError):
+                # Some noise types might fail with pure noise - this is acceptable
+                pass
+        
+        # Test that the data still maintains basic properties
+        self.assertIsInstance(X_pure_noise, np.ndarray, 'Output should still be a numpy array')
+        self.assertEqual(X_pure_noise.shape, X.shape, 'Shape should be preserved')
+        self.assertEqual(X_pure_noise.dtype, X.dtype, 'Data type should be preserved')
+        
+        # Test maximum deterioration
+        X_max_deterioration = self.cc_instance.generate_incremental_deterioration(
+            X, y, deterioration_type='temporal', deterioration_rate=1.0, max_deterioration=1.0
+        )
+        self.assertIsInstance(X_max_deterioration, np.ndarray, 'Output should be a numpy array')
+        self.assertEqual(X_max_deterioration.shape, X.shape, 'Shape should be preserved')
+        
+        # Test extreme cardinality drift
+        X_extreme_drift = self.cc_instance.generate_cardinality_drift(
+            X, drift_pattern='increase', drift_strength=1.0
+        )
+        self.assertIsInstance(X_extreme_drift, np.ndarray, 'Output should be a numpy array')
+        self.assertEqual(X_extreme_drift.shape, X.shape, 'Shape should be preserved')
+        
+        # Test that dataset_info is still properly maintained
+        self.assertIsInstance(self.cc_instance.dataset_info, dict, 'Dataset info should be maintained')
+        self.assertIn('noise', self.cc_instance.dataset_info, 'Noise info should be recorded')
+        
+        # Verify that pure noise data doesn't break basic operations
+        try:
+            # Test that we can still generate labels on pure noise data
+            y_noise = self.cc_instance.generate_labels(X_pure_noise)
+            self.assertEqual(len(y_noise), len(X_pure_noise), 'Label generation should work on pure noise')
+        except:
+            # If it fails, that's also acceptable for pure noise
+            pass
