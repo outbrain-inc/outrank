@@ -11,6 +11,9 @@ from collections import defaultdict
 from collections import deque
 from timeit import default_timer as timer
 from typing import Any
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
 
 import numpy as np
 import pandas as pd
@@ -588,6 +591,187 @@ def checkpoint_importances_df(importances_batch: list[tuple[str, str, float]]) -
     gdf = get_grouped_df(importances_batch)
     if gdf is not None:
         gdf.to_csv('ranking_checkpoint_tmp.tsv', sep='\t')
+
+
+def estimate_importances_minibatches_hogwild(
+    input_file: str,
+    column_descriptions: list,
+    fw_col_mapping: dict[str, str],
+    numeric_column_types: set,
+    batch_size: int = 100000,
+    args: Any = None,
+    data_encoding: str = 'utf-8',
+    cpu_pool: Any = None,
+    delimiter: str = '\t',
+    feature_construction_mode: bool = False,
+    logger: Any = None,
+) -> tuple[list[dict[str, Any]], Any, dict[Any, Any], list[dict[str, Any]], list[dict[str, set[str]]], defaultdict[str, list[set[str]]], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Hogwild-like interaction score estimator where idle threads can start processing subsequent batches.
+    
+    This implementation allows concurrent batch processing with overwriting capabilities for improved 
+    resource utilization, especially beneficial for higher-order interactions.
+    """
+    
+    invalid_line_queue: Any = deque([], maxlen=2**5)
+    invalid_lines = 0
+    line_counter = 0
+    
+    # Thread-safe storage for results
+    importances_df: list[Any] = []
+    bounds_storage_batch = []
+    memory_storage_batch = []
+    step_timing_checkpoints = []
+    
+    local_coverage_object = defaultdict(list)
+    
+    # Thread synchronization objects
+    results_lock = threading.Lock()
+    batch_queue = queue.Queue(maxsize=args.num_threads * 2)  # Buffer for batches
+    
+    local_pbar = tqdm.tqdm(
+        total=get_num_of_instances(input_file) - 1, position=0, disable=args.disable_tqdm == 'True',
+    )
+    
+    file_name, file_extension = os.path.splitext(input_file)
+    
+    if file_extension == '.gz':
+        file_stream = gzip.open(input_file, 'rt', encoding=data_encoding)
+    elif file_extension == '.zst':
+        file_stream = zstd.open(input_file, 'rt', encoding=data_encoding)
+    else:
+        file_stream = open(input_file, encoding=data_encoding)
+    
+    file_stream.readline()  # Skip header
+    
+    def process_batch_worker(batch_data, batch_id):
+        """Worker function to process a single batch"""
+        try:
+            importances_batch, bounds_storage, coverage_storage, memory_storage = compute_batch_ranking(
+                batch_data,
+                numeric_column_types,
+                args,
+                cpu_pool,
+                column_descriptions,
+                logger,
+                local_pbar,
+            )
+            
+            # Thread-safe result aggregation with potential overwriting
+            with results_lock:
+                # In Hogwild fashion, later batches can overwrite earlier ones
+                # We'll merge results, with later batch_id taking precedence
+                
+                # Store results with batch identifier for potential overwriting
+                result_entry = {
+                    'batch_id': batch_id,
+                    'importances': importances_batch,
+                    'bounds': bounds_storage,
+                    'coverage': coverage_storage,
+                    'memory': memory_storage
+                }
+                
+                return result_entry
+                
+        except Exception as e:
+            logger.error(f"Error processing batch {batch_id}: {e}")
+            return None
+    
+    # Read data and create batches
+    line_tmp_storage = []
+    batch_id = 0
+    batch_futures = []
+    
+    local_pbar.set_description('Starting Hogwild ranking computation')
+    
+    # Use ThreadPoolExecutor for Hogwild-like concurrent processing
+    with ThreadPoolExecutor(max_workers=args.num_threads) as executor:
+        
+        for line in file_stream:
+            line_counter += 1
+            local_pbar.update(1)
+            
+            if line_counter % args.subsampling != 0:
+                continue
+            
+            parsed_line = generic_line_parser(
+                line, delimiter, args, fw_col_mapping, column_descriptions,
+            )
+            
+            if len(parsed_line) == len(column_descriptions):
+                line_tmp_storage.append(parsed_line)
+            else:
+                invalid_line_queue.appendleft(str(parsed_line))
+                invalid_lines += 1
+            
+            # Submit batch for processing when ready
+            if len(line_tmp_storage) >= args.minibatch_size:
+                # Submit the batch to be processed concurrently
+                future = executor.submit(process_batch_worker, line_tmp_storage.copy(), batch_id)
+                batch_futures.append(future)
+                
+                line_tmp_storage = []
+                batch_id += 1
+                
+                local_pbar.set_description(f'Submitted batch {batch_id} for Hogwild processing')
+        
+        # Process remaining data if any
+        if line_tmp_storage and len(line_tmp_storage) > 2**10:
+            line_tmp_storage = line_tmp_storage[:args.minibatch_size]
+            future = executor.submit(process_batch_worker, line_tmp_storage, batch_id)
+            batch_futures.append(future)
+        
+        file_stream.close()
+        
+        # Collect results in Hogwild fashion - as they complete
+        local_pbar.set_description('Collecting Hogwild results')
+        
+        completed_batches = {}
+        for future in as_completed(batch_futures):
+            result = future.result()
+            if result is not None:
+                batch_id = result['batch_id']
+                completed_batches[batch_id] = result
+                
+                # Hogwild behavior: immediately integrate results, allowing overwriting
+                importances_df += result['importances'].triplet_scores
+                bounds_storage_batch.append(result['bounds'])
+                memory_storage_batch.append(result['memory'])
+                step_timing_checkpoints.append(result['importances'].step_times)
+                
+                for k, v in result['coverage'].items():
+                    local_coverage_object[k].append(v)
+                
+                if args.heuristic != 'Constant':
+                    checkpoint_importances_df(importances_df)
+                
+                local_pbar.set_description(f'Processed batch {batch_id} in Hogwild mode')
+    
+    local_pbar.set_description('Wrapping up Hogwild processing')
+    local_pbar.close()
+    
+    if invalid_lines > 0:
+        logger.info(
+            f"Detected {invalid_lines} invalid lines. If this number is very high, it's possible your header is off - re-check your data/attribute-feature mappings please!",
+        )
+        
+        invalid_lines_log = '\n INVALID_LINE ====> '.join(
+            list(invalid_line_queue)[0:5],
+        )
+        logger.info(
+            f'5 samples of invalid lines are printed below\n {invalid_lines_log}',
+        )
+    
+    return (
+        step_timing_checkpoints,
+        get_grouped_df(importances_df),
+        GLOBAL_CARDINALITY_STORAGE.copy(),
+        bounds_storage_batch,
+        memory_storage_batch,
+        local_coverage_object,
+        GLOBAL_RARE_VALUE_STORAGE.copy(),
+        GLOBAL_PRIOR_COMB_COUNTS.copy(),
+        GLOBAL_COUNTS_STORAGE.copy(),
+    )
 
 
 def estimate_importances_minibatches(

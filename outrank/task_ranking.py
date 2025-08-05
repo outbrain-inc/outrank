@@ -14,6 +14,7 @@ import zstandard as zstd
 
 from outrank.algorithms.importance_estimator import rank_features_3MR
 from outrank.core_ranking import estimate_importances_minibatches
+from outrank.core_ranking import estimate_importances_minibatches_hogwild
 from outrank.core_utils import display_random_tip
 from outrank.core_utils import display_tool_name
 from outrank.core_utils import get_dataset_info
@@ -93,6 +94,13 @@ def outrank_task_conduct_ranking(args: Any) -> None:
                 or args.data_source == 'csv-raw'
                 or args.data_source == 'ob-raw-dump'
             ):
+                # Choose between standard and Hogwild parallelism
+                if args.enable_hogwild_parallelism == 'True':
+                    logging.info('Using Hogwild-like parallelism for batch processing')
+                    estimate_function = estimate_importances_minibatches_hogwild
+                else:
+                    estimate_function = estimate_importances_minibatches
+                    
                 (
                     checkpoint_timings,
                     mutual_information_estimates,
@@ -103,7 +111,7 @@ def outrank_task_conduct_ranking(args: Any) -> None:
                     RARE_VALUE_STORAGE,
                     GLOBAL_PRIOR_COMB_COUNTS,
                     GLOBAL_ITEM_COUNTS,
-                ) = estimate_importances_minibatches(**cmd_arguments)
+                ) = estimate_function(**cmd_arguments)
 
             global_bounds_storage += bounds_object_storage
             global_memory_storage += memory_object_storage

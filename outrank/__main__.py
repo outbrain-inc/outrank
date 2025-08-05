@@ -126,6 +126,13 @@ def main():
     parser.add_argument(
         '--num_threads', type=int, default=8, help='Number of threads to consider. More threads implies faster ranking, however, there will be some memory overhead. Should be as large as the machine can handle memory-wise.',
     )
+    
+    parser.add_argument(
+        '--enable_hogwild_parallelism',
+        type=str,
+        default='False',
+        help='If enabled, uses Hogwild-like parallelism where idle threads can start processing subsequent batches, allowing for overwriting. This can improve resource utilization especially for higher-order interactions.',
+    )
 
     parser.add_argument(
         '--label_column',
