@@ -1,0 +1,7 @@
+{
+    "_tr_sqrt": "np.sqrt(X)",
+    "_tr_log": "np.log(X + 1)",
+    "_tr_square": "np.square(X)",
+    "_tr_abs": "np.abs(X)",
+    "_tr_exp": "np.exp(X)"
+}
