@@ -644,7 +644,7 @@ class CategoricalClassification:
         X: ArrayLike,
         y: list[int] | ArrayLike,
         p: float = 0.2,
-        type: Literal['categorical', 'missing'] = 'categorical',
+        type: Literal['categorical', 'missing', 'cardinality', 'value_drift', 'frequency_drift'] = 'categorical',
         missing_val: str | int | float = float('-inf'),
     ) -> np.ndarray:
 
@@ -653,7 +653,7 @@ class CategoricalClassification:
         :param X: dataset to apply noise to
         :param y: required target labels for categorical noise generation
         :param p: amount of noise to apply. Defaults to 0.2
-        :param type: type of noise to apply, either categorical or missing
+        :param type: type of noise to apply, supports 'categorical', 'missing', 'cardinality', 'value_drift', 'frequency_drift'
         :param missing_val: value to simulate missing values. Defaults to float('-inf')
         :return: X with noise applied
         """
@@ -733,6 +733,99 @@ class CategoricalClassification:
 
             return Xn_T.T
 
+        elif type == 'cardinality':
+            # Cardinality noise: add or remove unique values from features
+            X_noise = np.copy(X)
+            n_samples, n_features = X_noise.shape
+            
+            for feature_idx in range(n_features):
+                feature = X_noise[:, feature_idx]
+                unique_vals = np.unique(feature)
+                n_unique = len(unique_vals)
+                
+                # Determine if we should add or remove cardinality
+                if np.random.random() < 0.5 and n_unique > 2:
+                    # Remove cardinality by replacing least frequent values
+                    val_counts = np.bincount(feature - feature.min())
+                    least_frequent = np.argmin(val_counts) + feature.min()
+                    most_frequent = np.argmax(val_counts) + feature.min()
+                    
+                    # Replace least frequent with most frequent
+                    mask = feature == least_frequent
+                    n_replace = int(np.sum(mask) * p)
+                    if n_replace > 0:
+                        replace_indices = np.where(mask)[0][:n_replace]
+                        X_noise[replace_indices, feature_idx] = most_frequent
+                else:
+                    # Add cardinality by introducing new values
+                    n_modify = int(n_samples * p)
+                    if n_modify > 0:
+                        modify_indices = np.random.choice(n_samples, n_modify, replace=False)
+                        new_val = unique_vals.max() + 1
+                        X_noise[modify_indices, feature_idx] = new_val
+            
+            return X_noise
+
+        elif type == 'value_drift':
+            # Value drift: gradually shift values over the dataset
+            X_noise = np.copy(X)
+            n_samples, n_features = X_noise.shape
+            
+            for feature_idx in range(n_features):
+                feature = X_noise[:, feature_idx]
+                unique_vals = np.unique(feature)
+                
+                # Create a drift pattern that increases with sample index
+                drift_strength = np.linspace(0, p, n_samples)
+                
+                for i in range(n_samples):
+                    if np.random.random() < drift_strength[i]:
+                        # Shift value by a small amount
+                        current_val = feature[i]
+                        # Find position in unique values and shift
+                        val_pos = np.where(unique_vals == current_val)[0]
+                        if len(val_pos) > 0:
+                            pos = val_pos[0]
+                            max_shift = min(2, len(unique_vals) - 1 - pos, pos)
+                            if max_shift > 0:
+                                shift = np.random.choice([-max_shift, max_shift])
+                                new_pos = max(0, min(len(unique_vals) - 1, pos + shift))
+                                X_noise[i, feature_idx] = unique_vals[new_pos]
+            
+            return X_noise
+
+        elif type == 'frequency_drift':
+            # Frequency drift: change the frequency distribution of values over time
+            X_noise = np.copy(X)
+            n_samples, n_features = X_noise.shape
+            
+            for feature_idx in range(n_features):
+                feature = X_noise[:, feature_idx]
+                unique_vals = np.unique(feature)
+                
+                # Split data into chunks and modify frequency in later chunks
+                chunk_size = n_samples // 4
+                n_modify_per_chunk = int(chunk_size * p)
+                
+                for chunk_idx in range(1, 4):  # Skip first chunk (no drift)
+                    start_idx = chunk_idx * chunk_size
+                    end_idx = min((chunk_idx + 1) * chunk_size, n_samples)
+                    
+                    if n_modify_per_chunk > 0 and end_idx > start_idx:
+                        # Select random indices in this chunk
+                        chunk_indices = np.arange(start_idx, end_idx)
+                        modify_indices = np.random.choice(
+                            chunk_indices, 
+                            min(n_modify_per_chunk, len(chunk_indices)), 
+                            replace=False
+                        )
+                        
+                        # Bias towards specific values (simulate frequency shift)
+                        target_val = unique_vals[chunk_idx % len(unique_vals)]
+                        X_noise[modify_indices, feature_idx] = target_val
+            
+            return X_noise
+
         else:
             raise ValueError(f'Type {type} not supported')
 
@@ -796,6 +889,181 @@ class CategoricalClassification:
         })
 
         return X_downsampled, y_downsampled
+
+    def generate_incremental_deterioration(
+        self,
+        X: ArrayLike,
+        y: list[int] | ArrayLike,
+        deterioration_type: Literal['temporal', 'sample_based', 'feature_based'] = 'temporal',
+        deterioration_rate: float = 0.1,
+        max_deterioration: float = 0.5,
+        noise_types: list[str] | None = None,
+    ) -> np.ndarray:
+        """
+        Applies incremental deterioration to the dataset, simulating gradual data quality degradation
+        :param X: Dataset to apply deterioration to
+        :param y: Labels corresponding to X
+        :param deterioration_type: Type of deterioration pattern
+        :param deterioration_rate: Rate at which deterioration increases
+        :param max_deterioration: Maximum deterioration level (0-1)
+        :param noise_types: List of noise types to apply during deterioration
+        :return: Dataset with incremental deterioration applied
+        """
+        
+        if noise_types is None:
+            noise_types = ['categorical', 'cardinality', 'value_drift']
+        
+        X_deteriorated = np.copy(X)
+        n_samples, n_features = X_deteriorated.shape
+        
+        if deterioration_type == 'temporal':
+            # Deterioration increases over time (sample index)
+            for i in range(n_samples):
+                # Calculate deterioration level for this sample
+                progress = i / (n_samples - 1)
+                deterioration_level = min(max_deterioration, deterioration_rate * progress)
+                
+                if deterioration_level > 0:
+                    # Apply random noise type
+                    noise_type = np.random.choice(noise_types)
+                    
+                    # Apply noise to this sample only
+                    sample_data = X_deteriorated[i:i+1, :]
+                    sample_labels = y[i:i+1] if hasattr(y, '__len__') else [y]
+                    
+                    try:
+                        deteriorated_sample = self.generate_noise(
+                            sample_data, sample_labels, p=deterioration_level, type=noise_type
+                        )
+                        X_deteriorated[i:i+1, :] = deteriorated_sample
+                    except (ValueError, IndexError):
+                        # Skip if noise type not applicable to this sample
+                        pass
+        
+        elif deterioration_type == 'sample_based':
+            # Random samples get increasingly worse deterioration
+            deterioration_levels = np.random.exponential(deterioration_rate, n_samples)
+            deterioration_levels = np.clip(deterioration_levels, 0, max_deterioration)
+            
+            for i in range(n_samples):
+                if deterioration_levels[i] > 0:
+                    noise_type = np.random.choice(noise_types)
+                    
+                    sample_data = X_deteriorated[i:i+1, :]
+                    sample_labels = y[i:i+1] if hasattr(y, '__len__') else [y]
+                    
+                    try:
+                        deteriorated_sample = self.generate_noise(
+                            sample_data, sample_labels, p=deterioration_levels[i], type=noise_type
+                        )
+                        X_deteriorated[i:i+1, :] = deteriorated_sample
+                    except (ValueError, IndexError):
+                        pass
+        
+        elif deterioration_type == 'feature_based':
+            # Different features deteriorate at different rates
+            feature_deterioration_rates = np.random.uniform(0, deterioration_rate, n_features)
+            
+            for feature_idx in range(n_features):
+                if feature_deterioration_rates[feature_idx] > 0:
+                    # Apply deterioration to entire feature column
+                    deterioration_level = min(max_deterioration, feature_deterioration_rates[feature_idx])
+                    noise_type = np.random.choice(noise_types)
+                    
+                    # Create temporary dataset with just this feature
+                    temp_X = X_deteriorated[:, feature_idx:feature_idx+1]
+                    
+                    try:
+                        deteriorated_feature = self.generate_noise(
+                            temp_X, y, p=deterioration_level, type=noise_type
+                        )
+                        X_deteriorated[:, feature_idx:feature_idx+1] = deteriorated_feature
+                    except (ValueError, IndexError):
+                        pass
+        
+        self.dataset_info['deterioration'] = {
+            'type': deterioration_type,
+            'rate': deterioration_rate,
+            'max_deterioration': max_deterioration,
+            'noise_types': noise_types,
+        }
+        
+        return X_deteriorated
+
+    def generate_cardinality_drift(
+        self,
+        X: ArrayLike,
+        drift_pattern: Literal['increase', 'decrease', 'oscillate'] = 'increase',
+        drift_strength: float = 0.2,
+        affected_features: list[int] | None = None,
+    ) -> np.ndarray:
+        """
+        Generates cardinality drift patterns in the dataset
+        :param X: Dataset to apply cardinality drift to
+        :param drift_pattern: Pattern of cardinality change
+        :param drift_strength: Strength of the drift effect (0-1)
+        :param affected_features: List of feature indices to affect, None for all
+        :return: Dataset with cardinality drift applied
+        """
+        
+        X_drift = np.copy(X)
+        n_samples, n_features = X_drift.shape
+        
+        if affected_features is None:
+            affected_features = list(range(n_features))
+        
+        for feature_idx in affected_features:
+            if feature_idx >= n_features:
+                continue
+                
+            feature = X_drift[:, feature_idx]
+            unique_vals = np.unique(feature)
+            n_unique = len(unique_vals)
+            
+            # Calculate drift progression
+            progress = np.linspace(0, 1, n_samples)
+            
+            if drift_pattern == 'increase':
+                # Gradually introduce new values
+                for i in range(n_samples):
+                    if np.random.random() < drift_strength * progress[i]:
+                        # Add new unique value
+                        new_val = unique_vals.max() + np.random.randint(1, 5)
+                        X_drift[i, feature_idx] = new_val
+                        
+            elif drift_pattern == 'decrease':
+                # Gradually merge values together
+                for i in range(n_samples):
+                    if np.random.random() < drift_strength * progress[i] and n_unique > 2:
+                        current_val = feature[i]
+                        # Replace with most common value
+                        val_counts = np.bincount(feature - feature.min())
+                        most_common = np.argmax(val_counts) + feature.min()
+                        X_drift[i, feature_idx] = most_common
+                        
+            elif drift_pattern == 'oscillate':
+                # Oscillating cardinality
+                oscillation = np.sin(progress * 4 * np.pi) * 0.5 + 0.5  # 0 to 1
+                for i in range(n_samples):
+                    if np.random.random() < drift_strength * oscillation[i]:
+                        if oscillation[i] > 0.5:
+                            # Increase cardinality
+                            new_val = unique_vals.max() + np.random.randint(1, 3)
+                            X_drift[i, feature_idx] = new_val
+                        else:
+                            # Decrease cardinality (merge values)
+                            if n_unique > 2:
+                                val_counts = np.bincount(feature - feature.min())
+                                most_common = np.argmax(val_counts) + feature.min()
+                                X_drift[i, feature_idx] = most_common
+        
+        self.dataset_info['cardinality_drift'] = {
+            'pattern': drift_pattern,
+            'strength': drift_strength,
+            'affected_features': affected_features,
+        }
+        
+        return X_drift
 
     def print_dataset(
         self,
