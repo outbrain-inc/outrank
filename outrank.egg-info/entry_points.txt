@@ -1,0 +1,2 @@
+[console_scripts]
+outrank = outrank.__main__:main
