@@ -53,12 +53,17 @@ def prior_combinations_sample(combinations: list[tuple[Any, ...]], args: Any) ->
     if len(combinations) == 0:
         return []
 
-    missing_combinations = set(set(combinations)).difference(GLOBAL_PRIOR_COMB_COUNTS.keys())
-    if len(missing_combinations) > 0:
-        for combination in missing_combinations:
+    # Optimized: Only update missing combinations, avoid redundant set operations
+    for combination in combinations:
+        if combination not in GLOBAL_PRIOR_COMB_COUNTS:
             GLOBAL_PRIOR_COMB_COUNTS[combination] = 0
 
-    tmp = sorted(combinations, key=GLOBAL_PRIOR_COMB_COUNTS.get, reverse=False)[:args.combination_number_upper_bound]
+    # Optimized: Use heapq.nsmallest for better performance when upper bound is small
+    if args.combination_number_upper_bound < len(combinations) / 2:
+        import heapq
+        tmp = heapq.nsmallest(args.combination_number_upper_bound, combinations, key=GLOBAL_PRIOR_COMB_COUNTS.get)
+    else:
+        tmp = sorted(combinations, key=GLOBAL_PRIOR_COMB_COUNTS.get, reverse=False)[:args.combination_number_upper_bound]
 
     for combination in tmp:
         GLOBAL_PRIOR_COMB_COUNTS[combination] += 1
@@ -80,12 +85,12 @@ def get_combinations_from_columns(all_columns: pd.Index, args: Any) -> list[tupl
         )
         combinations += [(column, args.label_column) for column in rel_columns]
     else:
-        _combinations = itertools.combinations_with_replacement(all_columns, 2)
-
-        # Some applications do not require the full feature-feature triangular matrix
+        # Optimized: Direct generation for target_ranking_only case (most common)
         if args.target_ranking_only == 'True':
-            combinations = [x for x in _combinations if args.label_column in x]
+            # Include all features with label, including label with itself
+            combinations = [(col, args.label_column) for col in all_columns]
         else:
+            _combinations = itertools.combinations_with_replacement(all_columns, 2)
             combinations = list(_combinations)
 
     if args.target_ranking_only != 'True':
@@ -106,13 +111,14 @@ def mixed_rank_graph(
     all_columns = input_dataframe.columns
 
     triplets = []
-    tmp_df = input_dataframe.copy().astype('category')
     out_time_struct = {}
 
-    # Handle cont. types prior to interaction evaluation
+    # Handle cont. types prior to interaction evaluation - optimized encoding
     pbar.set_description('Encoding columns')
     start_enc_timer = timer()
-    tmp_df = pd.DataFrame({k : tmp_df[k].cat.codes for k in all_columns})
+    
+    # Optimized: Direct encoding without intermediate copy and DataFrame creation
+    tmp_df = input_dataframe.astype('category').apply(lambda x: x.cat.codes)
 
     end_enc_timer = timer()
     out_time_struct['encoding_columns'] = end_enc_timer - start_enc_timer
