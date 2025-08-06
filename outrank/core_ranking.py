@@ -53,10 +53,9 @@ def prior_combinations_sample(combinations: list[tuple[Any, ...]], args: Any) ->
     if len(combinations) == 0:
         return []
 
-    missing_combinations = set(set(combinations)).difference(GLOBAL_PRIOR_COMB_COUNTS.keys())
-    if len(missing_combinations) > 0:
-        for combination in missing_combinations:
-            GLOBAL_PRIOR_COMB_COUNTS[combination] = 0
+    missing_combinations = set(combinations).difference(GLOBAL_PRIOR_COMB_COUNTS.keys())
+    for combination in missing_combinations:
+        GLOBAL_PRIOR_COMB_COUNTS[combination] = 0
 
     tmp = sorted(combinations, key=GLOBAL_PRIOR_COMB_COUNTS.get, reverse=False)[:args.combination_number_upper_bound]
 
@@ -161,10 +160,9 @@ def mixed_rank_graph(
         inv = (triplet[1], triplet[0], triplet[2])
         final_triplets.append(inv)
         final_triplets.append(triplet)
-        triplets = final_triplets
 
     pbar.set_description('Proceeding to the next batch of data')
-    return BatchRankingSummary(triplets, out_time_struct)
+    return BatchRankingSummary(final_triplets, out_time_struct)
 
 
 def enrich_with_transformations(

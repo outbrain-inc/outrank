@@ -6,17 +6,14 @@ import setuptools
 
 
 def _parse_requirements(file):
-    required_packages = []
     with open(
         os.path.join(os.path.dirname(__file__), file), encoding='utf-8',
     ) as req_file:
-        for line in req_file:
-            required_packages.append(line.strip())
-    return required_packages
+        return [line.strip() for line in req_file]
 
 
 def _read_description():
-    with open('README.md') as description:
+    with open('README.md', encoding='utf-8') as description:
         return description.read()
 
 
