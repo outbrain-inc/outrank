@@ -28,6 +28,9 @@ usage_examples = """
     # Higher order interactions
     outrank --task all --data_path pathToSomeData --data_source csv-raw --heuristic MI-numba-randomized --target_ranking_only True --combination_number_upper_bound 2048 --num_threads 8 --interaction_order 3 --output_folder ./ranking_outputs --subsampling 20
 
+    # Using custom JSON transformers
+    outrank --task ranking --data_path pathToSomeData --data_source csv-raw --heuristic MI-numba-randomized --transformers examples/custom_transformers.json --output_folder ./ranking_outputs
+
     # More docs and use cases at https://outbrain.github.io/outrank/outrank.html
 """
 
@@ -145,7 +148,7 @@ def main():
         '--transformers',
         type=str,
         default='none',
-        help='Collection of which feature transformations to consider. Examples are: fw-transformers, default',
+        help='Collection of which feature transformations to consider. Examples are: fw-transformers, default, minimal. Also supports JSON file paths (e.g., custom_transformers.json) and combinations (e.g., default,custom.json)',
     )
 
     parser.add_argument(
