@@ -1,12 +1,16 @@
 
+#!/bin/bash
+
 # isort
 isort .
 
 ## emacs noise ;)
 find . -name '*~' -type f -delete
 
-## other noise
-find . | grep -E "(__pycache__|\.pyc|\.pyo$)" | xargs rm -r
+## other noise - more robust cleanup
+find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+find . -name "*.pyc" -delete
+find . -name "*.pyo" -delete
 
 ## import cleanup
 find . -name '*.py' | xargs autoflake --in-place --remove-unused-variables --expand-star-imports
