@@ -1,0 +1,9 @@
+{
+    "_tr_custom_sigmoid": "1 / (1 + np.exp(-X))",
+    "_tr_custom_tanh": "np.tanh(X)",
+    "_tr_custom_relu": "np.maximum(0, X)",
+    "_tr_custom_normalize": "(X - np.min(X)) / (np.max(X) - np.min(X))",
+    "_tr_custom_zscore": "(X - np.mean(X)) / np.std(X)",
+    "_tr_custom_log_sigmoid": "np.log(1 / (1 + np.exp(-X)))",
+    "_tr_custom_softplus": "np.log(1 + np.exp(X))"
+}

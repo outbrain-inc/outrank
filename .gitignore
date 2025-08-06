@@ -1,5 +1,34 @@
 
-# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DL
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info
+# Python
+
 __pycache__/
 *.py[cod]
 *$py.class
@@ -130,6 +159,7 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+
 # Pyre type checke
 .pyre/
 
@@ -139,3 +169,4 @@ test_data_synthetic/
 *.tsv
 *.json
 tmp_checkpoint.tsv
+

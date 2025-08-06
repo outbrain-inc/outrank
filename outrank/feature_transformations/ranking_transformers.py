@@ -1,7 +1,9 @@
 # A collection of feature transformers that can be considered
 from __future__ import annotations
 
+import json
 import logging
+import os
 from typing import Any
 
 import numpy as np
@@ -72,21 +74,36 @@ class FeatureTransformerNoise:
 
 class FeatureTransformerGeneric:
     def __init__(self, numeric_column_names: set[str], preset: str = 'default'):
+        self.transformer_collection: dict[str, str] = dict()
+        
         for transformer_namespace in preset.split(','):
-            self.transformer_collection: dict[str, str] = dict()
-            transformer_subspace = transformer_vault._tr_global_namespace.get(
-                transformer_namespace, None,
-            )
-            if transformer_subspace:
-                self.transformer_collection = {
-                    **self.transformer_collection,
-                    **transformer_subspace,
-                }
-
-            if len(self.transformer_collection) == 0:
-                raise NotImplementedError(
-                    'Please, specify valid transformer namespaces (e.g., default, minimal etc.)',
+            transformer_namespace = transformer_namespace.strip()
+            
+            # Check if it's a JSON file path
+            if transformer_namespace.endswith('.json'):
+                if os.path.isfile(transformer_namespace):
+                    json_transformers = self._load_transformers_from_json(transformer_namespace)
+                    self.transformer_collection = {
+                        **self.transformer_collection,
+                        **json_transformers,
+                    }
+                else:
+                    raise FileNotFoundError(f"Transformer JSON file not found: {transformer_namespace}")
+            else:
+                # Handle existing preset names
+                transformer_subspace = transformer_vault._tr_global_namespace.get(
+                    transformer_namespace, None,
                 )
+                if transformer_subspace:
+                    self.transformer_collection = {
+                        **self.transformer_collection,
+                        **transformer_subspace,
+                    }
+
+        if len(self.transformer_collection) == 0:
+            raise NotImplementedError(
+                'Please, specify valid transformer namespaces (e.g., default, minimal etc.) or provide a valid JSON file path.',
+            )
 
         self.numeric_column_names = set(numeric_column_names)
         self.constructed_feature_names: set[str] = set()
@@ -96,6 +113,28 @@ class FeatureTransformerGeneric:
 
         # If more than 75% of vals are missing, don't consider a transformation
         self.nan_prop_support = 0.75
+
+    def _load_transformers_from_json(self, json_file_path: str) -> dict[str, str]:
+        """Load transformer specifications from a JSON file."""
+        try:
+            with open(json_file_path, 'r') as f:
+                transformers = json.load(f)
+            
+            if not isinstance(transformers, dict):
+                raise ValueError(f"JSON file {json_file_path} must contain a dictionary of transformer specifications")
+            
+            # Validate that all values are strings (transformer expressions)
+            for key, value in transformers.items():
+                if not isinstance(value, str):
+                    raise ValueError(f"Transformer '{key}' in {json_file_path} must have a string expression, got {type(value)}")
+            
+            logging.info(f"Loaded {len(transformers)} transformers from {json_file_path}")
+            return transformers
+            
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in transformer file {json_file_path}: {e}")
+        except Exception as e:
+            raise
 
     def get_vals(self, tmp_df: pd.DataFrame, col_name: str) -> Any:
         cvals = tmp_df[col_name].values.tolist()
