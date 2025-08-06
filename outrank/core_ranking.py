@@ -60,7 +60,6 @@ def prior_combinations_sample(combinations: list[tuple[Any, ...]], args: Any) ->
 
     # Optimized: Use heapq.nsmallest for better performance when upper bound is small
     if args.combination_number_upper_bound < len(combinations) / 2:
-        import heapq
         tmp = heapq.nsmallest(args.combination_number_upper_bound, combinations, key=GLOBAL_PRIOR_COMB_COUNTS.get)
     else:
         tmp = sorted(combinations, key=GLOBAL_PRIOR_COMB_COUNTS.get, reverse=False)[:args.combination_number_upper_bound]
