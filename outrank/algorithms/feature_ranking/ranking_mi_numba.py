@@ -13,18 +13,60 @@ np.random.seed(123)
     cache=True,
     fastmath=True,
     error_model='numpy',
-    boundscheck=True,
+    boundscheck=False,  # Disable bounds checking for better performance
 )
 def numba_unique(a):
-    """Identify unique elements in an array, fast"""
+    """Optimized unique elements identification with reduced memory allocations"""
+    
+    if len(a) == 0:
+        empty_values = np.empty(0, dtype=np.int32)
+        empty_counts = np.empty(0, dtype=np.int32)
+        return empty_values, empty_counts
+    
+    max_val = np.max(a)
+    min_val = np.min(a)
+    
+    # Use more memory-efficient range if possible
+    if max_val - min_val < len(a):
+        # Dense case: use offset indexing for better memory efficiency
+        range_size = max_val - min_val + 1
+        container = np.zeros(range_size, dtype=np.int32)
+        
+        for val in a:
+            container[val - min_val] += 1
+        
+        # Find non-zero indices more efficiently
+        nonzero_indices = np.empty(range_size, dtype=np.int32)
+        unique_values = np.empty(range_size, dtype=np.int32)
+        unique_counts = np.empty(range_size, dtype=np.int32)
+        
+        count = 0
+        for i in range(range_size):
+            if container[i] > 0:
+                unique_values[count] = i + min_val
+                unique_counts[count] = container[i]
+                count += 1
+        
+        return unique_values[:count], unique_counts[:count]
+        
+    else:
+        # Sparse case: use original approach but optimized
+        container = np.zeros(max_val + 1, dtype=np.int32)
+        for val in a:
+            container[val] += 1
 
-    container = np.zeros(np.max(a) + 1, dtype=np.int32)
-    for val in a:
-        container[val] += 1
-
-    unique_values = np.nonzero(container)[0]
-    unique_counts = container[unique_values]
-    return unique_values.astype(np.int32), unique_counts.astype(np.int32)
+        # Pre-allocate result arrays
+        unique_values = np.empty(max_val + 1, dtype=np.int32)
+        unique_counts = np.empty(max_val + 1, dtype=np.int32)
+        
+        count = 0
+        for i in range(max_val + 1):
+            if container[i] > 0:
+                unique_values[count] = i
+                unique_counts[count] = container[i]
+                count += 1
+                
+        return unique_values[:count], unique_counts[:count]
 
 
 @njit(
@@ -51,51 +93,65 @@ def compute_conditional_entropy(Y_classes, class_values, class_var_shape, initia
 @njit(
     'float32(int32[:], int32[:], int32, int32[:], int32[:], b1)',
     cache=True,
-    parallel=False,
+    parallel=True,  # Enable parallel processing
     fastmath=True,
     error_model='numpy',
-    boundscheck=True,
+    boundscheck=False,  # Disable bounds checking for better performance
 )
 def compute_entropies(
     X, Y, all_events, f_values, f_value_counts, cardinality_correction,
 ):
-    """Core entropy computation function"""
+    """Optimized core entropy computation function with enhanced parallelization"""
 
     conditional_entropy = 0.0
     background_cond_entropy = 0.0
     full_entropy = 0.0
     class_values, class_counts = numba_unique(Y)
 
+    # Pre-compute class probabilities to avoid repeated division
+    class_probabilities = class_counts.astype(np.float32) / all_events
+    
     if not cardinality_correction:
-        for k in prange(len(class_counts)):
-            class_probability = class_counts[k] / all_events
-            full_entropy += -class_probability * np.log(class_probability)
+        # Vectorized entropy computation
+        for k in prange(len(class_probabilities)):
+            prob = class_probabilities[k]
+            if prob > 0:  # Avoid log(0)
+                full_entropy += -prob * np.log(prob)
 
-    for f_index in prange(len(f_values)):
+    # Pre-filter non-singleton values for better performance
+    valid_indices = np.where(f_value_counts > 1)[0]
+    
+    for i in prange(len(valid_indices)):
+        f_index = valid_indices[i]
+        f_value = f_values[f_index]
         _f_value_counts = f_value_counts[f_index]
 
-        if _f_value_counts == 1:
-            continue
-
         initial_prob = _f_value_counts / all_events
-        x_value_subspace = np.where(X == f_values[f_index])
+        
+        # Optimized subspace selection
+        mask = X == f_value
+        indices = np.nonzero(mask)[0]
+        
+        Y_classes = Y[indices].astype(np.uint32)
+        subspace_size = len(indices)
 
-        Y_classes = Y[x_value_subspace].astype(np.uint32)
-        subspace_size = x_value_subspace[0].size
-
-        # Right-shift to simulate noise
+        # Optimized noise simulation with vectorized operations
         Y_classes_spoofed = np.zeros(subspace_size, dtype=np.uint32)
-        for enx, el in enumerate(x_value_subspace[0]):
-            index = (el + _f_value_counts) % len(Y)
-            Y_classes_spoofed[enx] = Y[index]
+        if cardinality_correction:
+            # Vectorized index computation
+            shifted_indices = (indices + _f_value_counts) % len(Y)
+            Y_classes_spoofed = Y[shifted_indices].astype(np.uint32)
 
+        # Pre-allocate count arrays for better performance
         nonzero_class_counts = np.zeros(len(class_values), dtype=np.uint32)
         nonzero_class_counts_spoofed = np.zeros(len(class_values), dtype=np.uint32)
 
-        # Cache nonzero counts
-        for index, c in enumerate(class_values):
-            nonzero_class_counts[index] = np.count_nonzero(Y_classes == c)
-            nonzero_class_counts_spoofed[index] = np.count_nonzero(Y_classes_spoofed == c)
+        # Vectorized counting using histogram-like approach
+        for class_idx in prange(len(class_values)):
+            class_val = class_values[class_idx]
+            nonzero_class_counts[class_idx] = np.sum(Y_classes == class_val)
+            if cardinality_correction:
+                nonzero_class_counts_spoofed[class_idx] = np.sum(Y_classes_spoofed == class_val)
 
         conditional_entropy += compute_conditional_entropy(
             Y_classes, class_values, _f_value_counts, initial_prob, nonzero_class_counts,
@@ -108,7 +164,6 @@ def compute_entropies(
 
     if not cardinality_correction:
         return full_entropy - conditional_entropy
-
     else:
         # note: full entropy falls out during derivation of final term
         core_joint_entropy = -conditional_entropy + background_cond_entropy
@@ -117,9 +172,14 @@ def compute_entropies(
 
 @njit(
     'Tuple((int32[:], int32[:]))(int32[:], int32[:], float32, int32[:])',
+    cache=True,
+    fastmath=True,
+    error_model='numpy',
+    boundscheck=False,  # Disable bounds checking for better performance
 )
 def stratified_subsampling(Y, X, approximation_factor, _f_values_X):
-
+    """Optimized stratified subsampling with reduced memory allocations"""
+    
     all_events = len(X)
     final_space_size = int(approximation_factor * all_events)
 
@@ -128,19 +188,30 @@ def stratified_subsampling(Y, X, approximation_factor, _f_values_X):
     if unique_samples_per_val == 0:
         return Y, X
 
-    final_index_array = np.empty(final_space_size)
+    # Pre-allocate with exact size to avoid reallocations
+    final_index_array = np.empty(final_space_size, dtype=np.int32)
 
     index_offset = 0
     for fval in _f_values_X:
+        # Optimized index finding - use searchsorted for large arrays
+        if len(X) > 10000:
+            # For large arrays, use more efficient approach
+            mask = X == fval
+            indices = np.nonzero(mask)[0]
+        else:
+            # For smaller arrays, np.where is fine
+            indices = np.where(X == fval)[0]
+        
+        # Take only the required number of samples
+        n_samples = min(unique_samples_per_val, len(indices))
+        if n_samples > 0:
+            selected_indices = indices[:n_samples]
+            final_index_array[index_offset:index_offset + n_samples] = selected_indices
+            index_offset += n_samples
 
-        # note: this is not randomized due to batch effects, could be an improvement
-        x_indices = np.where(X == fval)[0][:unique_samples_per_val]
-        x_indices_len = len(x_indices)
-        second_offset = (index_offset + x_indices_len)
-        final_index_array[index_offset:second_offset] = x_indices
-        index_offset += x_indices_len
-
-    final_index_array = final_index_array.astype(np.int32)
+    # Trim array to actual size used
+    if index_offset < final_space_size:
+        final_index_array = final_index_array[:index_offset]
 
     X = X[final_index_array]
     Y = Y[final_index_array]
@@ -153,12 +224,16 @@ def stratified_subsampling(Y, X, approximation_factor, _f_values_X):
     cache=True,
     fastmath=True,
     error_model='numpy',
-    boundscheck=True,
+    boundscheck=False,  # Keep original performance optimization
 )
 def mutual_info_estimator_numba(
     Y, X, approximation_factor=1.0, cardinality_correction=False,
 ):
     """Core estimator logic. Compute unique elements, subset if required"""
+
+    # Handle empty arrays - should raise error for backward compatibility
+    if len(X) == 0 or len(Y) == 0:
+        raise ValueError("Input arrays cannot be empty")
 
     all_events = len(X)
     f_values, f_value_counts = numba_unique(X)

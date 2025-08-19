@@ -48,6 +48,21 @@ def internal_hash(input_obj: str) -> str:
     return xxhash.xxh32(input_obj, seed=20141025).hexdigest()
 
 
+# Add caching decorator for expensive hash computations
+from functools import lru_cache
+
+@lru_cache(maxsize=100000)  # Cache up to 100k hash computations
+def cached_internal_hash(input_obj: str) -> str:
+    """Cached version of internal hash for frequent computations"""
+    return xxhash.xxh32(input_obj, seed=20141025).hexdigest()
+
+
+@lru_cache(maxsize=50000)  # Cache feature hash computations  
+def cached_feature_hash(input_obj: str, seed: int = 123) -> str:
+    """Cached hash computation for feature combinations"""
+    return xxhash.xxh64(input_obj, seed=seed).hexdigest()
+
+
 @dataclass
 class DatasetInformationStorage:
     """A generic class for holding properties of a given type of dataset"""

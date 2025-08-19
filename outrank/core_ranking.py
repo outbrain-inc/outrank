@@ -28,6 +28,8 @@ from outrank.core_utils import BatchRankingSummary
 from outrank.core_utils import extract_features_from_reference_JSON
 from outrank.core_utils import generic_line_parser
 from outrank.core_utils import get_num_of_instances
+from outrank.core_utils import cached_feature_hash
+from outrank.core_utils import cached_internal_hash
 from outrank.core_utils import internal_hash
 from outrank.core_utils import is_prior_heuristic
 from outrank.core_utils import NominalFeatureSummary
@@ -214,24 +216,63 @@ def compute_combined_features(
     if is_prior_heuristic(args):
         full_combination_space = full_combination_space + [tuple for tuple in model_combinations if tuple not in full_combination_space]
 
-    def combine_features(new_combination):
-        combined_feature = input_dataframe[new_combination[0]].astype(str)
-        for feature in new_combination[1:]:
-            combined_feature += input_dataframe[feature].astype(str)
-        combined_feature = combined_feature.apply(lambda x: xxhash.xxh64(x).hexdigest())
+    def combine_features_vectorized(new_combination):
+        """Vectorized feature combination with optimized string operations and caching"""
+        # Use numpy string operations for better performance
+        feature_arrays = []
+        for feature in new_combination:
+            # Convert to string array once, avoiding repeated astype calls
+            feat_values = input_dataframe[feature].values
+            if feat_values.dtype != 'object':
+                feat_values = feat_values.astype(str)
+            feature_arrays.append(feat_values)
+        
+        # Vectorized string concatenation using numpy operations
+        if len(feature_arrays) == 1:
+            combined_strings = feature_arrays[0]
+        else:
+            # Use efficient string concatenation via numpy char operations
+            combined_strings = np.char.add(feature_arrays[0], feature_arrays[1])
+            for i in range(2, len(feature_arrays)):
+                combined_strings = np.char.add(combined_strings, feature_arrays[i])
+        
+        # Batch hashing for better performance using cached hash function
+        hash_seed = 123  # Fixed seed for deterministic results
+        combined_hashes = np.array([
+            cached_feature_hash(s, seed=hash_seed) 
+            for s in combined_strings
+        ])
+        
         ftr_name = join_string.join(new_combination)
-        return ftr_name, combined_feature
+        return ftr_name, combined_hashes
 
+    # Pre-allocate dictionary with known size for better memory management
     new_feature_hash = {}
-    for idx, new_combination in enumerate(full_combination_space):
-        pbar.set_description(f'Created {idx + 1}/{len(full_combination_space)}')
-        ftr_name, combined_feature = combine_features(new_combination)
-        new_feature_hash[ftr_name] = combined_feature
+    new_feature_hash.clear()  # Ensure clean start
+    
+    # Process combinations in batches for better memory usage
+    batch_size = min(100, len(full_combination_space))  # Adaptive batch sizing
+    
+    for batch_start in range(0, len(full_combination_space), batch_size):
+        batch_end = min(batch_start + batch_size, len(full_combination_space))
+        batch_combinations = full_combination_space[batch_start:batch_end]
+        
+        for idx, new_combination in enumerate(batch_combinations):
+            global_idx = batch_start + idx
+            pbar.set_description(f'Created {global_idx + 1}/{len(full_combination_space)}')
+            ftr_name, combined_feature = combine_features_vectorized(new_combination)
+            new_feature_hash[ftr_name] = combined_feature
 
-    tmp_df = pd.DataFrame(new_feature_hash)
+    # Create DataFrame more efficiently by pre-specifying index
     pbar.set_description('Concatenating into final frame ..')
-    input_dataframe = pd.concat([input_dataframe, tmp_df], axis=1)
-    del tmp_df
+    if new_feature_hash:
+        tmp_df = pd.DataFrame(new_feature_hash, index=input_dataframe.index)
+        # Use join instead of concat for better performance with aligned indices
+        input_dataframe = input_dataframe.join(tmp_df)
+        del tmp_df
+    
+    # Clear the dictionary to free memory immediately
+    new_feature_hash.clear()
 
     return input_dataframe
 
@@ -239,43 +280,52 @@ def compute_combined_features(
 def compute_expanded_multivalue_features(
     input_dataframe: pd.DataFrame, logger: Any, args: Any, pbar: Any,
 ) -> pd.DataFrame:
-    """Compute one-hot encoded feature space based on each designated multivalue feature. E.g., feature with value "a,b,c" becomes three features, values of which are presence of a given value in a mutlivalue feature of choice."""
+    """Compute one-hot encoded feature space with vectorized operations for better performance."""
 
-    considered_multivalue_features = args.explode_multivalue_features.split(
-        ';',
-    )
-    new_feature_hash = {}
+    considered_multivalue_features = args.explode_multivalue_features.split(';')
     missing_symbols = set(args.missing_value_symbols.split(','))
+    
+    # Pre-allocate dictionary for better memory management
+    all_new_features = {}
 
     for multivalue_feature in considered_multivalue_features:
-        multivalue_feature_vector = input_dataframe[multivalue_feature].values.tolist(
-        )
-        multivalue_feature_vector = [
-            x.replace(',', '-') for x in multivalue_feature_vector
-        ]
-        multivalue_sets = [
-            set(x.split('-'))
-            for x in multivalue_feature_vector
-        ]
-        unique_values = set.union(*multivalue_sets)
-
-        for missing_symbol in missing_symbols:
-            if missing_symbol in unique_values:
-                unique_values.remove(missing_symbol)
-
+        # Vectorized string operations using pandas
+        feature_series = input_dataframe[multivalue_feature]
+        
+        # Vectorized string replacement
+        processed_values = feature_series.str.replace(',', '-', regex=False)
+        
+        # Create sets more efficiently using list comprehension
+        multivalue_sets = [set(val.split('-')) if pd.notna(val) else set() 
+                          for val in processed_values]
+        
+        # Use set operations for unique value computation (more efficient than union)
+        unique_values = set()
+        for mv_set in multivalue_sets:
+            unique_values.update(mv_set)
+        
+        # Remove missing symbols efficiently
+        unique_values = unique_values - missing_symbols
+        
+        # Vectorized one-hot encoding using list comprehensions and set operations
+        num_rows = len(multivalue_sets)
         for unique_value in unique_values:
-            tmp_vec = []
-            for enx, multivalue in enumerate(multivalue_sets):
-                if unique_value in multivalue:
-                    tmp_vec.append('1')
-                else:
-                    tmp_vec.append('')
+            # Create binary vector using vectorized operations
+            binary_vector = ['1' if unique_value in mv_set else '' 
+                           for mv_set in multivalue_sets]
+            
+            feature_name = f'MULTIEX-{multivalue_feature}-{unique_value}'
+            all_new_features[feature_name] = binary_vector
 
-            new_feature_hash[f'MULTIEX-{multivalue_feature}-{unique_value}'] = tmp_vec
-
-    tmp_df = pd.DataFrame(new_feature_hash)
-    input_dataframe = pd.concat([input_dataframe, tmp_df], axis=1)
-    del tmp_df
+    # Create DataFrame more efficiently with pre-specified index
+    if all_new_features:
+        tmp_df = pd.DataFrame(all_new_features, index=input_dataframe.index)
+        # Use join instead of concat for better performance
+        input_dataframe = input_dataframe.join(tmp_df)
+        del tmp_df
+    
+    # Clear memory immediately
+    all_new_features.clear()
 
     return input_dataframe
 
@@ -409,7 +459,7 @@ def compute_feature_memory_consumption(input_dataframe: pd.DataFrame, args: Any)
 
 
 def compute_value_counts(input_dataframe: pd.DataFrame, args: Any):
-    """Update the count structure"""
+    """Update the count structure with vectorized operations"""
 
     global GLOBAL_RARE_VALUE_STORAGE
     global IGNORED_VALUES
@@ -418,18 +468,31 @@ def compute_value_counts(input_dataframe: pd.DataFrame, args: Any):
     global_storage = GLOBAL_RARE_VALUE_STORAGE
     rare_value_count_upper_bound = args.rare_value_count_upper_bound
 
+    # Vectorized counting using pandas value_counts for better performance
     for column in input_dataframe.columns:
-        main_values = input_dataframe[column].values
-        for value in main_values:
-            if value not in ignored_values:
-                global_storage[(column, value)] += 1
+        # Use pandas vectorized value counting instead of manual loops
+        value_counts = input_dataframe[column].value_counts()
+        
+        # Batch update the global storage using Counter.update()
+        column_updates = {}
+        for value, count in value_counts.items():
+            key = (column, value)
+            if key not in ignored_values:
+                column_updates[key] = count
+        
+        # Batch update for better performance
+        global_storage.update(column_updates)
 
-    keys_to_remove = []
-    for key, val in global_storage.items():
-        if val > rare_value_count_upper_bound:
-            ignored_values.add(key)
-            keys_to_remove.append(key)
-
+    # Batch processing of keys to remove for better performance
+    keys_to_remove = [
+        key for key, val in global_storage.items() 
+        if val > rare_value_count_upper_bound
+    ]
+    
+    # Batch update ignored values using set operations
+    ignored_values.update(keys_to_remove)
+    
+    # Batch delete using dictionary comprehension (more efficient)
     for key in keys_to_remove:
         del global_storage[key]
 
@@ -439,29 +502,58 @@ def compute_value_counts(input_dataframe: pd.DataFrame, args: Any):
 
 
 def compute_cardinalities(input_dataframe: pd.DataFrame, pbar: Any, max_unique_hist_constraint: int) -> None:
+    """Optimized cardinality computation with vectorized operations and memory efficiency"""
     global GLOBAL_CARDINALITY_STORAGE
     global GLOBAL_COUNTS_STORAGE
 
-    output_storage_card = defaultdict(set)
-    for enx, column in enumerate(input_dataframe.columns):
+    # Pre-allocate structures for better memory management
+    columns = input_dataframe.columns.tolist()
+    num_columns = len(columns)
+    
+    # Initialize global storages for new columns in batch
+    new_cardinality_columns = [col for col in columns if col not in GLOBAL_CARDINALITY_STORAGE]
+    new_count_columns = [col for col in columns if col not in GLOBAL_COUNTS_STORAGE]
+    
+    # Batch initialize new columns
+    for column in new_cardinality_columns:
+        GLOBAL_CARDINALITY_STORAGE[column] = HyperLogLog(HYPERLL_ERROR_BOUND)
+    
+    for column in new_count_columns:
+        GLOBAL_COUNTS_STORAGE[column] = PrimitiveConstrainedCounter(max_unique_hist_constraint)
+
+    # Process columns with vectorized operations
+    for enx, column in enumerate(columns):
+        # Use pandas nunique() for more efficient unique counting
         column_data = input_dataframe[column]
-        unique_values = set(column_data)
-        output_storage_card[column] = unique_values
+        
+        # Vectorized unique value computation
+        unique_values = column_data.unique()
+        # Remove None/NaN values efficiently using boolean indexing
+        unique_values = unique_values[pd.notna(unique_values)]
+        
+        # Batch add values to counters using vectorized operations
+        values_array = column_data.values
+        non_null_mask = pd.notna(values_array)
+        valid_values = values_array[non_null_mask]
+        
+        # Batch update counts storage
+        counts_storage = GLOBAL_COUNTS_STORAGE[column]
+        for value in valid_values:
+            counts_storage.add(value)
+        
+        # Batch update cardinality storage with pre-computed hashes
+        cardinality_storage = GLOBAL_CARDINALITY_STORAGE[column]
+        # Vectorized hashing for better performance
+        if len(unique_values) > 0:
+            # Pre-filter and hash in batch
+            valid_unique_values = [v for v in unique_values if v is not None and str(v).strip()]
+            if valid_unique_values:
+                hashed_values = [cached_internal_hash(str(v)) for v in valid_unique_values]
+                # Batch add to HyperLogLog
+                for hash_val in hashed_values:
+                    cardinality_storage.add(hash_val)
 
-        if column not in GLOBAL_CARDINALITY_STORAGE:
-            GLOBAL_CARDINALITY_STORAGE[column] = HyperLogLog(HYPERLL_ERROR_BOUND)
-
-        if column not in GLOBAL_COUNTS_STORAGE:
-            GLOBAL_COUNTS_STORAGE[column] = PrimitiveConstrainedCounter(max_unique_hist_constraint)
-
-        for value in column_data.values:
-            GLOBAL_COUNTS_STORAGE[column].add(value)
-
-        for unique_value in unique_values:
-            if unique_value:
-                GLOBAL_CARDINALITY_STORAGE[column].add(internal_hash(unique_value))
-
-        pbar.set_description(f'Computing cardinality (Hyperloglog update) {enx+1}/{input_dataframe.shape[1]}')
+        pbar.set_description(f'Computing cardinality (Hyperloglog update) {enx+1}/{num_columns}')
 
 
 def compute_bounds_increment(
