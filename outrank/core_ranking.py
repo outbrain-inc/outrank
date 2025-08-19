@@ -77,7 +77,7 @@ def get_combinations_from_columns(all_columns: pd.Index, args: Any) -> list[tupl
         combinations = list(
             itertools.combinations_with_replacement(non_rel_columns, 2),
         )
-        combinations += [(column, args.label_column) for column in rel_columns]
+        combinations.extend([(column, args.label_column) for column in rel_columns])
     else:
         _combinations = itertools.combinations_with_replacement(all_columns, 2)
 
@@ -89,11 +89,11 @@ def get_combinations_from_columns(all_columns: pd.Index, args: Any) -> list[tupl
 
     if args.target_ranking_only != 'True':
         # Diagonal elements (non-label)
-        combinations += [
+        combinations.extend([
             (individual_column, individual_column)
             for individual_column in all_columns
             if individual_column != args.label_column
-        ]
+        ])
     return combinations
 
 
@@ -512,7 +512,8 @@ def compute_batch_ranking(
             focus_set = set(args.feature_set_focus.split(','))
 
         focus_set.add(args.label_column)
-        focus_set = {x for x in focus_set if x in input_dataframe.columns}
+        # More efficient: intersection instead of comprehension
+        focus_set = focus_set.intersection(input_dataframe.columns)
         input_dataframe = input_dataframe[list(focus_set)]
 
     if args.transformers != 'none':
@@ -624,63 +625,63 @@ def estimate_importances_minibatches(
 
     file_name, file_extension = os.path.splitext(input_file)
 
+    # Open file with proper context management for better resource handling
     if file_extension == '.gz':
-        file_stream = gzip.open(input_file, 'rt', encoding=data_encoding)
+        file_opener = gzip.open
     elif file_extension == '.zst':
-        file_stream = zstd.open(input_file, 'rt', encoding=data_encoding)
+        file_opener = zstd.open
     else:
-        file_stream = open(input_file, encoding=data_encoding)
+        file_opener = open
 
-    file_stream.readline()
+    with file_opener(input_file, 'rt', encoding=data_encoding) as file_stream:
+        file_stream.readline()  # Skip header
 
-    local_pbar.set_description('Starting ranking computation')
-    for line in file_stream:
-        line_counter += 1
-        local_pbar.update(1)
+        local_pbar.set_description('Starting ranking computation')
+        for line in file_stream:
+            line_counter += 1
+            local_pbar.update(1)
 
-        if line_counter % args.subsampling != 0:
-            continue
+            if line_counter % args.subsampling != 0:
+                continue
 
-        parsed_line = generic_line_parser(
-            line, delimiter, args, fw_col_mapping, column_descriptions,
-        )
-
-        if len(parsed_line) == len(column_descriptions):
-            line_tmp_storage.append(parsed_line)
-
-        else:
-            invalid_line_queue.appendleft(str(parsed_line))
-            invalid_lines += 1
-
-        # Batches need to be processed on-the-fly
-        if len(line_tmp_storage) >= args.minibatch_size:
-
-            importances_batch, bounds_storage, coverage_storage, memory_storage = compute_batch_ranking(
-                line_tmp_storage,
-                numeric_column_types,
-                args,
-                cpu_pool,
-                column_descriptions,
-                logger,
-                local_pbar,
+            parsed_line = generic_line_parser(
+                line, delimiter, args, fw_col_mapping, column_descriptions,
             )
 
-            bounds_storage_batch.append(bounds_storage)
-            memory_storage_batch.append(memory_storage)
-            for k, v in coverage_storage.items():
-                local_coverage_object[k].append(v)
+            if len(parsed_line) == len(column_descriptions):
+                line_tmp_storage.append(parsed_line)
 
-            del coverage_storage
+            else:
+                invalid_line_queue.appendleft(str(parsed_line))
+                invalid_lines += 1
 
-            line_tmp_storage = []
-            step_timing_checkpoints.append(importances_batch.step_times)
-            importances_df += importances_batch.triplet_scores
+            # Batches need to be processed on-the-fly
+            if len(line_tmp_storage) >= args.minibatch_size:
 
-            if args.heuristic != 'Constant':
-                local_pbar.set_description('Creating checkpoint')
-                checkpoint_importances_df(importances_df)
+                importances_batch, bounds_storage, coverage_storage, memory_storage = compute_batch_ranking(
+                    line_tmp_storage,
+                    numeric_column_types,
+                    args,
+                    cpu_pool,
+                    column_descriptions,
+                    logger,
+                    local_pbar,
+                )
 
-    file_stream.close()
+                bounds_storage_batch.append(bounds_storage)
+                memory_storage_batch.append(memory_storage)
+                for k, v in coverage_storage.items():
+                    local_coverage_object[k].append(v)
+
+                del coverage_storage
+
+                line_tmp_storage = []
+                step_timing_checkpoints.append(importances_batch.step_times)
+                importances_df.extend(importances_batch.triplet_scores)
+
+                if args.heuristic != 'Constant':
+                    local_pbar.set_description('Creating checkpoint')
+                    checkpoint_importances_df(importances_df)
 
     local_pbar.set_description('Parsing the remainder')
     if invalid_lines > 0:
@@ -689,7 +690,7 @@ def estimate_importances_minibatches(
         )
 
         invalid_lines_log = '\n INVALID_LINE ====> '.join(
-            list(invalid_line_queue)[0:5],
+            list(invalid_line_queue)[:5],
         )
         logger.info(
             f'5 samples of invalid lines are printed below\n {invalid_lines_log}',
@@ -713,7 +714,7 @@ def estimate_importances_minibatches(
             local_coverage_object[k].append(v)
 
         step_timing_checkpoints.append(importances_batch.step_times)
-        importances_df += importances_batch.triplet_scores
+        importances_df.extend(importances_batch.triplet_scores)
         bounds_storage = dict()
         bounds_storage_batch.append(bounds_storage)
         checkpoint_importances_df(importances_df)

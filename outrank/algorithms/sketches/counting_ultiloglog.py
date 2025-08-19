@@ -36,25 +36,24 @@ class HyperLogLogWCache:
         if len(self.warmup_set) < self.warmup_size and not self.hll_flag:
             self.warmup_set.add(value)
         elif not self.hll_flag:
-            if not self.hll_flag:
-                self.M = np.zeros(self.m)
-                for element in self.warmup_set:
-                    self._hasher_update(element)
-                self.warmup_set = {}
+            # Initialize HyperLogLog when warmup is complete
+            self.M = np.zeros(self.m)
+            for element in self.warmup_set:
+                self._hasher_update(element)
+            self.warmup_set = set()  # Clear warmup set and convert to set for consistency
             self.hll_flag = True
         else:
             self._hasher_update(value)
 
     def __len__(self):
         if self.hll_flag:
-            basis = np.ceil(
-                self.m *
-                np.log(np.divide(self.m, len(np.where(self.M == 0)[0]))),
-            )
-            if basis != np.inf:
-                return int(basis) - 1
-            else:
-                return 2**self.p
+            # Optimize: calculate zero count once
+            zero_count = len(np.where(self.M == 0)[0])
+            if zero_count > 0:
+                basis = np.ceil(self.m * np.log(self.m / zero_count))
+                if basis != np.inf:
+                    return int(basis) - 1
+            return 2**self.p
         else:
             return len(self.warmup_set)
 

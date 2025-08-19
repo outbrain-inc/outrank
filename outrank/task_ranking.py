@@ -105,9 +105,9 @@ def outrank_task_conduct_ranking(args: Any) -> None:
                     GLOBAL_ITEM_COUNTS,
                 ) = estimate_importances_minibatches(**cmd_arguments)
 
-            global_bounds_storage += bounds_object_storage
-            global_memory_storage += memory_object_storage
-            all_timings += checkpoint_timings
+            global_bounds_storage.extend(bounds_object_storage)
+            global_memory_storage.extend(memory_object_storage)
+            all_timings.extend(checkpoint_timings)
 
             if cardinality_object is None:
                 continue

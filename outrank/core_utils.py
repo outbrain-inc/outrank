@@ -206,8 +206,8 @@ def parse_ob_csv_line(
 ) -> list[str]:
     """Data can have commas within JSON field dumps"""
 
-    clx = list(csv.reader([line_string])).pop()
-    return clx
+    # More efficient: directly get the first (and only) row
+    return next(csv.reader([line_string]))
 
 
 def generic_line_parser(
