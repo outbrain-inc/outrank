@@ -393,7 +393,7 @@ def parse_csv_raw(data_path) -> DatasetInformationStorage:
     with open(data_path) as inp_data:
         header = inp_data.readline()
     col_delimiter = ','
-    column_names = header.strip().split(col_delimiter)
+    column_names = list(csv.reader([header.strip()]))[0]
     encoding = 'latin1'
     return DatasetInformationStorage(
         data_path, column_names, column_types, col_delimiter, encoding, None,
