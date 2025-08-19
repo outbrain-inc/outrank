@@ -1,4 +1,7 @@
 
+# Profiling artifacts
+*.prof
+
 # Python cache files
 __pycache__/
 *.pyc

@@ -57,7 +57,9 @@ def prior_combinations_sample(combinations: list[tuple[Any, ...]], args: Any) ->
     for combination in missing_combinations:
         GLOBAL_PRIOR_COMB_COUNTS[combination] = 0
 
-    tmp = sorted(combinations, key=GLOBAL_PRIOR_COMB_COUNTS.get, reverse=False)[:args.combination_number_upper_bound]
+    # More efficient: avoid key lookup in sort by caching get method
+    count_getter = GLOBAL_PRIOR_COMB_COUNTS.get
+    tmp = sorted(combinations, key=count_getter, reverse=False)[:args.combination_number_upper_bound]
 
     for combination in tmp:
         GLOBAL_PRIOR_COMB_COUNTS[combination] += 1

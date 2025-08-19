@@ -14,7 +14,8 @@ class PrimitiveConstrainedCounter:
 
     def batch_add(self, lst):
         if len(self.default_counter) < self.max_bound_thr:
-            self.default_counter = self.default_counter + Counter(lst)
+            # More efficient: update instead of creating new counter
+            self.default_counter.update(lst)
 
     def add(self, val):
         if len(self.default_counter) < self.max_bound_thr:

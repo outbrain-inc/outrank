@@ -24,30 +24,18 @@ class FeatureTransformerNoise:
 
         new_columns = dict()
         if self.noise_preset == 'default':
-            new_columns['CONTROL-constant0'] = np.array([0] * dataframe.shape[0])
-            new_columns['CONTROL-gaussian'] = np.random.normal(
-                size=dataframe.shape[0],
-            )
-            new_columns['CONTROL-uniform'] = np.random.random(
-                dataframe.shape[0],
-            )
-            new_columns['CONTROL-random-binary'] = np.random.randint(
-                0, 2, dataframe.shape[0],
-            )
-            new_columns['CONTROL-random-card100'] = np.random.randint(
-                0, 1 + 1 * 10**2, dataframe.shape[0],
-            )
-            new_columns['CONTROL-random-card2k'] = np.random.randint(
-                0, 1 + 2 * 10**3, dataframe.shape[0],
-            )
-            new_columns['CONTROL-random-card10k'] = np.random.randint(
-                0, 1 + 10 * 10**3, dataframe.shape[0],
-            )
-            new_columns['CONTROL-random-card50k'] = np.random.randint(
-                0, 1 + 50 * 10**3, dataframe.shape[0],
-            )
-            new_columns['CONTROL-int-sequence'] = np.arange(
-                0, dataframe.shape[0], 1.0,
+            # Pre-calculate shape for efficiency
+            n_rows = dataframe.shape[0]
+            
+            new_columns['CONTROL-constant0'] = np.zeros(n_rows, dtype=np.int32)
+            new_columns['CONTROL-gaussian'] = np.random.normal(size=n_rows)
+            new_columns['CONTROL-uniform'] = np.random.random(n_rows)
+            new_columns['CONTROL-random-binary'] = np.random.randint(0, 2, n_rows)
+            new_columns['CONTROL-random-card100'] = np.random.randint(0, 1 + 1 * 10**2, n_rows)
+            new_columns['CONTROL-random-card2k'] = np.random.randint(0, 1 + 2 * 10**3, n_rows)
+            new_columns['CONTROL-random-card10k'] = np.random.randint(0, 1 + 10 * 10**3, n_rows)
+            new_columns['CONTROL-random-card50k'] = np.random.randint(0, 1 + 50 * 10**3, n_rows)
+            new_columns['CONTROL-int-sequence'] = np.arange(0, n_rows, 1.0,
             )
 
             if label_column not in dataframe.columns:
@@ -57,8 +45,10 @@ class FeatureTransformerNoise:
             else:
                 new_columns['CONTROL-target'] = dataframe[label_column]
 
+            # More efficient: avoid iterrows which is very slow
             new_columns['CONTROL-volume'] = np.array([
-                internal_hash(str(x)) for _, x in dataframe.iterrows()
+                internal_hash(''.join(map(str, row))) 
+                for row in dataframe.values
             ])
         else:
             # Not relevant yet; will be if this is useful.

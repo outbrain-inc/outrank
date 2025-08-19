@@ -157,7 +157,9 @@ def rank_features_3MR(
         top_importance = -np.inf
         most_important_feature = None
 
-        for feat in all_features - set(ranked_features):
+        # More efficient: use set subtraction once
+        remaining_features = all_features - set(ranked_features)
+        for feat in remaining_features:
             feature_redundancy = calc_higher_order(feat)
             feature_relation = calc_higher_order(feat, False)
             feature_relevance = relevance_dict[feat]
