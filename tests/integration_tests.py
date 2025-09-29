@@ -319,6 +319,41 @@ class StressTests(unittest.TestCase):
         mi_tiny = mutual_info_estimator_numba(arr1, arr2, np.float32(0.001), False)
         self.assertIsInstance(mi_tiny, (float, np.float32))
 
+    def test_multivalue_mi_integration(self):
+        """Test integration between multivalue MI algorithms and standard components"""
+        try:
+            from outrank.algorithms.feature_ranking.ranking_mi_multivalue import multivalue_mutual_info_estimator
+            from outrank.algorithms.importance_estimator import conduct_feature_ranking
+            
+            # Test data with multivalue features
+            X_multivalue = np.array(['a,b', 'b,c', 'a,c', 'a,b,c', 'b,c'])
+            Y_multivalue = np.array(['x,y', 'y,z', 'x,z', 'x,y,z', 'y,z'])
+            
+            # Test all multivalue algorithms
+            algorithms = ['jaccard', 'overlap', 'set_based']
+            for algo in algorithms:
+                with self.subTest(algorithm=algo):
+                    result = multivalue_mutual_info_estimator(X_multivalue, Y_multivalue, algorithm=algo)
+                    self.assertIsInstance(result, float)
+                    self.assertGreaterEqual(result, 0.0)
+                    
+            # Test integration with conduct_feature_ranking
+            class MockArgs:
+                def __init__(self, heuristic):
+                    self.heuristic = heuristic
+                    self.mi_stratified_sampling_ratio = 1.0
+            
+            heuristics = ['MI-multivalue-jaccard', 'MI-multivalue-overlap', 'MI-multivalue-set']
+            for heuristic in heuristics:
+                with self.subTest(heuristic=heuristic):
+                    args = MockArgs(heuristic)
+                    result = conduct_feature_ranking(X_multivalue, Y_multivalue, args)
+                    self.assertIsInstance(result, float)
+                    self.assertGreaterEqual(result, 0.0)
+        
+        except ImportError:
+            self.skipTest("Multivalue MI not available")
+
 
 if __name__ == '__main__':
     unittest.main()
