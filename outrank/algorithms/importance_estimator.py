@@ -42,6 +42,9 @@ def sklearn_MI(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
 def sklearn_surrogate(
     vector_first: np.ndarray, vector_second: np.ndarray,  surrogate_model: str,
 ) -> float:
+    if vector_first.ndim == 1:
+        vector_first = vector_first.reshape(-1, 1)
+
     X = OneHotEncoder().fit_transform(vector_first)
 
     if '-SVD' in surrogate_model and X.shape[1] > 2:
