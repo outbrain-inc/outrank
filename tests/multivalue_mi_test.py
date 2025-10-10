@@ -15,7 +15,8 @@ class MultivalueMITest(unittest.TestCase):
     
     def test_parse_multivalue_feature(self):
         """Test parsing multivalue features into sets"""
-        feature_vector = np.array(['a,b,c', 'b,c', '', 'a'])
+        # Using default delimiter '_'
+        feature_vector = np.array(['a_b_c', 'b_c', '', 'a'])
         result = parse_multivalue_feature(feature_vector)
         
         expected = [
@@ -29,8 +30,18 @@ class MultivalueMITest(unittest.TestCase):
     
     def test_parse_multivalue_feature_with_custom_delimiter(self):
         """Test parsing with custom delimiter"""
-        feature_vector = np.array(['a;b;c', 'b;c', '', 'a'])
-        result = parse_multivalue_feature(feature_vector, delimiter=';')
+        # Test with comma delimiter
+        feature_vector = np.array(['a,b,c', 'b,c', '', 'a'])
+        result = parse_multivalue_feature(feature_vector, delimiter=',')
+        
+        expected = [
+            {'a', 'b', 'c'},
+            {'b', 'c'},
+            set(),
+            {'a'}
+        ]
+        
+        self.assertEqual(result, expected)
         
         expected = [
             {'a', 'b', 'c'},
@@ -95,8 +106,8 @@ class MultivalueMITest(unittest.TestCase):
     
     def test_multivalue_mutual_info_estimator_jaccard(self):
         """Test main estimator with Jaccard algorithm"""
-        X = np.array(['a,b', 'b,c', 'a,c'])
-        Y = np.array(['x,y', 'y,z', 'x,z'])
+        X = np.array(['a_b', 'b_c', 'a_c'])
+        Y = np.array(['x_y', 'y_z', 'x_z'])
         
         result = multivalue_mutual_info_estimator(X, Y, algorithm='jaccard')
         
@@ -105,8 +116,8 @@ class MultivalueMITest(unittest.TestCase):
     
     def test_multivalue_mutual_info_estimator_overlap(self):
         """Test main estimator with overlap algorithm"""
-        X = np.array(['a,b', 'b,c', 'a,c'])
-        Y = np.array(['x,y', 'y,z', 'x,z'])
+        X = np.array(['a_b', 'b_c', 'a_c'])
+        Y = np.array(['x_y', 'y_z', 'x_z'])
         
         result = multivalue_mutual_info_estimator(X, Y, algorithm='overlap')
         
@@ -115,8 +126,8 @@ class MultivalueMITest(unittest.TestCase):
     
     def test_multivalue_mutual_info_estimator_set_based(self):
         """Test main estimator with set-based algorithm"""
-        X = np.array(['a,b', 'b,c', 'a,c'])
-        Y = np.array(['x,y', 'y,z', 'x,z'])
+        X = np.array(['a_b', 'b_c', 'a_c'])
+        Y = np.array(['x_y', 'y_z', 'x_z'])
         
         result = multivalue_mutual_info_estimator(X, Y, algorithm='set_based')
         
@@ -125,8 +136,8 @@ class MultivalueMITest(unittest.TestCase):
     
     def test_multivalue_mutual_info_estimator_invalid_algorithm(self):
         """Test main estimator with invalid algorithm"""
-        X = np.array(['a,b', 'b,c', 'a,c'])
-        Y = np.array(['x,y', 'y,z', 'x,z'])
+        X = np.array(['a_b', 'b_c', 'a_c'])
+        Y = np.array(['x_y', 'y_z', 'x_z'])
         
         with self.assertRaises(ValueError):
             multivalue_mutual_info_estimator(X, Y, algorithm='invalid')
@@ -141,8 +152,8 @@ class MultivalueMITest(unittest.TestCase):
     
     def test_multivalue_mutual_info_estimator_mismatched_lengths(self):
         """Test main estimator with mismatched input lengths"""
-        X = np.array(['a,b'])
-        Y = np.array(['x,y', 'y,z'])
+        X = np.array(['a_b'])
+        Y = np.array(['x_y', 'y_z'])
         
         result = multivalue_mutual_info_estimator(X, Y, algorithm='jaccard')
         self.assertEqual(result, 0.0)
@@ -150,8 +161,8 @@ class MultivalueMITest(unittest.TestCase):
     def test_functional_relationship_detection(self):
         """Test detection of functional relationships in multivalue features"""
         # Create data with functional relationship: Y values determined by X values
-        X = np.array(['a,b', 'b,c', 'c,d', 'a,b', 'b,c', 'c,d'])
-        Y = np.array(['x,y', 'y,z', 'z,w', 'x,y', 'y,z', 'z,w'])
+        X = np.array(['a_b', 'b_c', 'c_d', 'a_b', 'b_c', 'c_d'])
+        Y = np.array(['x_y', 'y_z', 'z_w', 'x_y', 'y_z', 'z_w'])
         
         result = multivalue_mutual_info_estimator(X, Y, algorithm='set_based')
         
@@ -162,8 +173,8 @@ class MultivalueMITest(unittest.TestCase):
         """Test detection when there's no relationship between features"""
         # Create completely random multivalue features
         np.random.seed(42)
-        X = np.array([f'{i},{i+1}' for i in range(100)])
-        Y = np.array([f'{100-i},{100-i-1}' for i in range(100)])
+        X = np.array([f'{i}_{i+1}' for i in range(100)])
+        Y = np.array([f'{100-i}_{100-i-1}' for i in range(100)])
         
         result = multivalue_mutual_info_estimator(X, Y, algorithm='set_based')
         
@@ -175,20 +186,22 @@ class MultivalueMITest(unittest.TestCase):
         
         This addresses the issue raised in GitHub where Jaccard and overlap methods
         returned 0 for data like:
-        Col1: a,b  b,c  c,d
-        Col2: i,j,k  j,k,l  k,l,m
+        Col1: a,b  b,c  c,d (with comma delimiter)
+        Col2: i,j,k  j,k,l  k,l,m (with comma delimiter)
         
         Here intersections are empty in all cases, but there is information shared
         through the sequential patterns.
+        
+        NOTE: Using comma delimiter here to test the specific reported case.
         """
-        # Test case from GitHub comment
+        # Test case from GitHub comment - using comma delimiter
         Col1 = np.array(['a,b', 'b,c', 'c,d', 'd,e', 'e,f'])
         Col2 = np.array(['i,j,k', 'j,k,l', 'k,l,m', 'l,m,n', 'm,n,o'])
         
         # All algorithms should now detect information despite empty intersections
-        jaccard_score = multivalue_mutual_info_estimator(Col1, Col2, algorithm='jaccard')
-        overlap_score = multivalue_mutual_info_estimator(Col1, Col2, algorithm='overlap')
-        set_based_score = multivalue_mutual_info_estimator(Col1, Col2, algorithm='set_based')
+        jaccard_score = multivalue_mutual_info_estimator(Col1, Col2, algorithm='jaccard', delimiter=',')
+        overlap_score = multivalue_mutual_info_estimator(Col1, Col2, algorithm='overlap', delimiter=',')
+        set_based_score = multivalue_mutual_info_estimator(Col1, Col2, algorithm='set_based', delimiter=',')
         
         # All should detect meaningful information
         self.assertGreater(jaccard_score, 0.0, 

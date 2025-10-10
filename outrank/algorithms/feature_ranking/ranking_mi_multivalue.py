@@ -275,13 +275,14 @@ def multivalue_mi_with_overlap(X_multivalue: List[Set], Y_multivalue: List[Set])
     return _compute_discrete_mi(overlap_features, pattern_features)
 
 
-def parse_multivalue_feature(feature_vector: np.ndarray, delimiter: str = ',') -> List[Set]:
+def parse_multivalue_feature(feature_vector: np.ndarray, delimiter: str = '_') -> List[Set]:
     """
     Parse a multivalue feature vector into a list of sets.
     
     Args:
         feature_vector: Array of strings where each element contains multiple values
-        delimiter: Character used to separate values within each element
+        delimiter: Character used to separate values within each element (default: '_')
+                  Note: '_' is used as default instead of ',' to avoid conflicts with CSV format
     
     Returns:
         List of sets, one for each row in the feature vector
@@ -302,7 +303,7 @@ def parse_multivalue_feature(feature_vector: np.ndarray, delimiter: str = ',') -
 
 def multivalue_mutual_info_estimator(
     X_feature: np.ndarray, Y_feature: np.ndarray, 
-    algorithm: str = 'jaccard', delimiter: str = ','
+    algorithm: str = 'jaccard', delimiter: str = '_'
 ) -> float:
     """
     Main entry point for multivalue mutual information computation.
@@ -311,7 +312,8 @@ def multivalue_mutual_info_estimator(
         X_feature: First multivalue feature (array of strings with delimited values)
         Y_feature: Second multivalue feature (array of strings with delimited values)  
         algorithm: Algorithm to use ('jaccard', 'overlap', 'set_based')
-        delimiter: Delimiter used to separate values within each feature
+        delimiter: Delimiter used to separate values within each feature (default: '_')
+                  Note: '_' is used as default instead of ',' to avoid conflicts with CSV format
     
     Returns:
         Mutual information score between the two multivalue features
