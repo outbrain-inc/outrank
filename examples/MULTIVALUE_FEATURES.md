@@ -23,17 +23,29 @@ user_id,interests,skills
 ## Files
 
 - **`multivalue_data.csv`** - Sample CSV data with multivalue features using `_` delimiter
-- **`multivalue_end_to_end.py`** - Complete end-to-end example with 5 demonstrations
-- **`multivalue_example.py`** - Basic usage examples
-- **`run_multivalue_example.sh`** - Shell script to run the end-to-end example
+- **`multivalue_end_to_end.py`** - Complete end-to-end Python API example with 5 demonstrations
+- **`multivalue_example.py`** - Basic Python usage examples
+- **`run_multivalue_example.sh`** - Shell script demonstrating OutRank CLI with multivalue heuristics
 
 ## Quick Start
 
+### Using OutRank CLI (Recommended)
+
 ```bash
-# Run the complete end-to-end example
+# Run OutRank with multivalue MI heuristics
 ./run_multivalue_example.sh
 
-# Or run Python directly
+# This will execute:
+# outrank --task all --data_path examples/multivalue_data.csv \
+#         --data_source csv-raw --heuristic MI-multivalue-set \
+#         --target_ranking_only True --num_threads 8 \
+#         --output_folder ./ranking_outputs_multivalue
+```
+
+### Using Python API
+
+```bash
+# Run the Python end-to-end example
 python3 multivalue_end_to_end.py
 ```
 
@@ -91,11 +103,25 @@ Three algorithms are available for multivalue MI:
 
 ## Heuristics for OutRank
 
-When using OutRank's main API, use these heuristic names:
+When using OutRank's CLI or main API, use these heuristic names:
 
 - `MI-multivalue-set` (recommended)
 - `MI-multivalue-jaccard`
 - `MI-multivalue-overlap`
+
+### Example CLI Usage
+
+```bash
+outrank \
+    --task all \
+    --data_path examples/multivalue_data.csv \
+    --data_source csv-raw \
+    --heuristic MI-multivalue-set \
+    --target_ranking_only True \
+    --num_threads 8 \
+    --output_folder ./ranking_outputs_multivalue \
+    --subsampling 100
+```
 
 ## Key Features
 

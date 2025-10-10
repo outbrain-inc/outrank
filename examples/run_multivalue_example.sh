@@ -1,34 +1,58 @@
 #!/bin/bash
 
-# End-to-end example for multivalue features with OutRank
-# This script demonstrates the complete workflow
+##########################################################################################################
+# Multivalue Features - Direct MI computation without expansion
+##########################################################################################################
 
-echo "========================================================================"
-echo "OutRank Multivalue Features - End-to-End Example"
-echo "========================================================================"
-echo ""
-echo "This example demonstrates:"
-echo "  1. Using '_' delimiter for multivalue features (not ',')"
-echo "  2. Direct multivalue MI computation (no expansion needed)"
-echo "  3. Integration with OutRank's feature ranking API"
-echo ""
+# This example demonstrates using multivalue MI heuristics with OutRank.
+# Multivalue features (e.g., "sports_music", "tech_art") are processed directly
+# without expanding them into one-hot encoded binary features.
 
-# Run the end-to-end Python example
-python3 examples/multivalue_end_to_end.py
+# IMPORTANT: Use '_' as delimiter in your CSV data for multivalue features!
+# Example CSV format:
+#   user_id,interests,skills,purchased,satisfaction
+#   1,sports_music,python_sql,laptop_phone,high
+#   2,music_tech,java_sql,phone_tablet,high
 
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "========================================================================"
-    echo "Example completed successfully!"
-    echo "========================================================================"
-    echo ""
-    echo "Next steps:"
-    echo "  - See examples/multivalue_data.csv for sample data format"
-    echo "  - Use '_' as delimiter in your CSV files for multivalue features"
-    echo "  - Use heuristics: MI-multivalue-jaccard, MI-multivalue-overlap, MI-multivalue-set"
-    echo ""
-else
-    echo ""
-    echo "Example failed! Check the error messages above."
-    exit 1
-fi
+# Three multivalue MI algorithms are available:
+# - MI-multivalue-set (recommended): Direct set-based mutual information
+# - MI-multivalue-jaccard: Jaccard similarity-based approach
+# - MI-multivalue-overlap: Overlap-based approach
+
+# hint - if unsure what parameters do, you can always run "outrank --help"
+
+outrank \
+    --task all \
+    --data_path examples/multivalue_data.csv \
+    --data_source csv-raw \
+    --heuristic MI-multivalue-set \
+    --target_ranking_only True \
+    --combination_number_upper_bound 2048 \
+    --num_threads 8 \
+    --output_folder ./ranking_outputs_multivalue \
+    --subsampling 100
+
+# Alternative: Use Jaccard-based multivalue MI
+# outrank \
+#     --task all \
+#     --data_path examples/multivalue_data.csv \
+#     --data_source csv-raw \
+#     --heuristic MI-multivalue-jaccard \
+#     --target_ranking_only True \
+#     --combination_number_upper_bound 2048 \
+#     --num_threads 8 \
+#     --output_folder ./ranking_outputs_multivalue \
+#     --subsampling 100
+
+# Alternative: Use overlap-based multivalue MI
+# outrank \
+#     --task all \
+#     --data_path examples/multivalue_data.csv \
+#     --data_source csv-raw \
+#     --heuristic MI-multivalue-overlap \
+#     --target_ranking_only True \
+#     --combination_number_upper_bound 2048 \
+#     --num_threads 8 \
+#     --output_folder ./ranking_outputs_multivalue \
+#     --subsampling 100
+
