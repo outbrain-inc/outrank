@@ -213,6 +213,48 @@ class MultivalueMITest(unittest.TestCase):
         
         # Set-based typically gives highest scores
         self.assertGreater(set_based_score, overlap_score * 0.5)
+    
+    def test_multivalue_with_compound_values(self):
+        """Test multivalue features with compound values like 'yellow_sun', 'green_grass', etc.
+        
+        This test addresses the request to handle realistic feature values that themselves
+        contain underscores (e.g., colors with objects). The algorithm should treat
+        'yellow_sun' as a single atomic value, not split it further.
+        """
+        # Multivalue features where each value is a compound word
+        # Using '|' as delimiter to separate different multivalue items
+        # since the values themselves contain underscores
+        colors1 = np.array(['yellow_sun|green_grass', 'blue_sea|red_flower', 
+                           'yellow_sun|blue_sea', 'green_grass|red_flower'])
+        colors2 = np.array(['yellow_sun|blue_sea', 'green_grass|red_flower',
+                           'yellow_sun|red_flower', 'blue_sea|green_grass'])
+        
+        # Test with pipe delimiter for the multivalue separation
+        for algo in ['jaccard', 'overlap', 'set_based']:
+            with self.subTest(algorithm=algo):
+                score = multivalue_mutual_info_estimator(
+                    colors1, colors2, algorithm=algo, delimiter='|'
+                )
+                # Should compute valid MI scores
+                self.assertIsInstance(score, float)
+                self.assertGreaterEqual(score, 0.0)
+        
+        # Verify parsing treats compound values as atomic units
+        parsed = parse_multivalue_feature(colors1, delimiter='|')
+        expected_first = {'yellow_sun', 'green_grass'}
+        expected_second = {'blue_sea', 'red_flower'}
+        
+        self.assertEqual(parsed[0], expected_first, 
+                        "Compound values should be treated as atomic units")
+        self.assertEqual(parsed[1], expected_second,
+                        "Compound values should be treated as atomic units")
+        
+        # Test that there's meaningful information between the features
+        set_based_score = multivalue_mutual_info_estimator(
+            colors1, colors2, algorithm='set_based', delimiter='|'
+        )
+        self.assertGreater(set_based_score, 0.0,
+                          "Should detect information between correlated multivalue features")
 
 
 if __name__ == '__main__':
