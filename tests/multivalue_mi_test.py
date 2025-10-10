@@ -169,6 +169,37 @@ class MultivalueMITest(unittest.TestCase):
         
         # Should detect high MI due to deterministic pattern (each X maps to unique Y)
         self.assertGreater(result, 0.0)
+    
+    def test_sequential_pattern_without_intersections(self):
+        """Test detection of sequential patterns when row-wise intersections are empty.
+        
+        This addresses the issue raised in GitHub where Jaccard and overlap methods
+        returned 0 for data like:
+        Col1: a,b  b,c  c,d
+        Col2: i,j,k  j,k,l  k,l,m
+        
+        Here intersections are empty in all cases, but there is information shared
+        through the sequential patterns.
+        """
+        # Test case from GitHub comment
+        Col1 = np.array(['a,b', 'b,c', 'c,d', 'd,e', 'e,f'])
+        Col2 = np.array(['i,j,k', 'j,k,l', 'k,l,m', 'l,m,n', 'm,n,o'])
+        
+        # All algorithms should now detect information despite empty intersections
+        jaccard_score = multivalue_mutual_info_estimator(Col1, Col2, algorithm='jaccard')
+        overlap_score = multivalue_mutual_info_estimator(Col1, Col2, algorithm='overlap')
+        set_based_score = multivalue_mutual_info_estimator(Col1, Col2, algorithm='set_based')
+        
+        # All should detect meaningful information
+        self.assertGreater(jaccard_score, 0.0, 
+                          "Jaccard should detect information in sequential patterns")
+        self.assertGreater(overlap_score, 0.0,
+                          "Overlap should detect information in sequential patterns")
+        self.assertGreater(set_based_score, 0.0,
+                          "Set-based should detect information in sequential patterns")
+        
+        # Set-based typically gives highest scores
+        self.assertGreater(set_based_score, overlap_score * 0.5)
 
 
 if __name__ == '__main__':

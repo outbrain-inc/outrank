@@ -98,11 +98,27 @@ def main():
         print(f"  {algo:>10}: {mi_score:.6f}")
     
     print("\n5. Algorithm descriptions:")
-    print("  - jaccard:   Uses Jaccard similarity between multivalue sets")
-    print("  - overlap:   Based on set overlap and size relationships")
+    print("  - jaccard:   Analyzes structural patterns via neighbor row analysis")
+    print("               and value co-occurrence, works even with empty intersections")
+    print("  - overlap:   Based on set overlap and cross-row co-occurrence patterns")
     print("  - set_based: Direct set-based mutual information computation")
-    print("\nThe set_based algorithm typically provides the most meaningful")
+    print("\nAll algorithms now properly handle cases where row-wise intersections")
+    print("are empty but structural patterns exist (e.g., sequential patterns).")
+    print("The set_based algorithm typically provides the most meaningful")
     print("mutual information scores for multivalue features.")
+    
+    # Demonstrate the fix for the GitHub issue
+    print("\n6. Handling sequential patterns (GitHub issue fix):")
+    sequential_x = np.array(['a,b', 'b,c', 'c,d', 'd,e', 'e,f'])
+    sequential_y = np.array(['i,j,k', 'j,k,l', 'k,l,m', 'l,m,n', 'm,n,o'])
+    
+    print("Data with NO row-wise intersections but clear sequential patterns:")
+    print("  X:", sequential_x[:3], "...")
+    print("  Y:", sequential_y[:3], "...")
+    print("\nResults (all algorithms now detect information):")
+    for algo in algorithms:
+        mi_score = multivalue_mutual_info_estimator(sequential_x, sequential_y, algorithm=algo)
+        print(f"  {algo:>10}: {mi_score:.6f} ✓")
 
 
 if __name__ == '__main__':
