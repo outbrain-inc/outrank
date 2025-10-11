@@ -47,15 +47,21 @@ def _compute_discrete_mi(X: List, Y: List) -> float:
     return float(mi)
 
 
-def set_based_mutual_info(X_sets: List[Set], Y_sets: List[Set]) -> float:
+def set_based_mutual_info(X_sets: List[Set], Y_sets: List[Set], cardinality_correction: bool = False) -> float:
     """
     Compute mutual information between two multivalue features represented as sets.
     
     X_sets: List of sets representing multivalue features
     Y_sets: List of sets representing multivalue features
+    cardinality_correction: If True, apply correction to prevent cardinality inflation
     
     This implements Set-based Mutual Information which treats multivalue features
     as sets and computes MI based on set intersections and unions.
+    
+    Cardinality correction helps prevent higher-cardinality multivalue features
+    from having artificially higher MI by default. When enabled, this uses a 
+    randomization approach similar to MI-numba-randomized to estimate and subtract
+    the bias introduced by high cardinality.
     """
     if len(X_sets) != len(Y_sets) or len(X_sets) == 0:
         return 0.0
@@ -81,19 +87,74 @@ def set_based_mutual_info(X_sets: List[Set], Y_sets: List[Set]) -> float:
         x_counts[x_key] = x_counts.get(x_key, 0) + 1  
         y_counts[y_key] = y_counts.get(y_key, 0) + 1
     
-    # Compute mutual information
-    mi = 0.0
-    for joint_key, joint_count in joint_counts.items():
-        x_key, y_key = joint_key
+    # Compute mutual information without cardinality correction
+    if not cardinality_correction:
+        mi = 0.0
+        for joint_key, joint_count in joint_counts.items():
+            x_key, y_key = joint_key
+            
+            p_xy = joint_count / n_samples
+            p_x = x_counts[x_key] / n_samples
+            p_y = y_counts[y_key] / n_samples
+            
+            if p_xy > 0 and p_x > 0 and p_y > 0:
+                mi += p_xy * np.log(p_xy / (p_x * p_y))
         
-        p_xy = joint_count / n_samples
-        p_x = x_counts[x_key] / n_samples
-        p_y = y_counts[y_key] / n_samples
-        
-        if p_xy > 0 and p_x > 0 and p_y > 0:
-            mi += p_xy * np.log(p_xy / (p_x * p_y))
+        return float(mi)
     
-    return float(mi)
+    # With cardinality correction: compute both real and spoofed associations
+    else:
+        # Compute conditional entropy H(Y|X)
+        conditional_entropy = 0.0
+        for x_key, x_count in x_counts.items():
+            p_x = x_count / n_samples
+            # For this X value, compute H(Y|X=x)
+            cond_entropy_given_x = 0.0
+            for y_key in y_counts.keys():
+                joint_key = (x_key, y_key)
+                if joint_key in joint_counts:
+                    p_y_given_x = joint_counts[joint_key] / x_count
+                    if p_y_given_x > 0:
+                        cond_entropy_given_x += -p_y_given_x * np.log(p_y_given_x)
+            conditional_entropy += p_x * cond_entropy_given_x
+        
+        # Compute background conditional entropy with spoofed Y
+        y_counts_spoofed = {}
+        background_joint_counts = {}
+        
+        for i in range(n_samples):
+            x_set = X_sets[i]
+            x_key = tuple(sorted(x_set)) if x_set else ()
+            
+            # Spoofed Y: shift index based on X cardinality
+            x_card = len(x_set) if x_set else 1
+            spoofed_idx = (i + x_card) % n_samples
+            y_set_spoofed = Y_sets[spoofed_idx]
+            y_key_spoofed = tuple(sorted(y_set_spoofed)) if y_set_spoofed else ()
+            
+            joint_key_spoofed = (x_key, y_key_spoofed)
+            background_joint_counts[joint_key_spoofed] = background_joint_counts.get(joint_key_spoofed, 0) + 1
+            y_counts_spoofed[y_key_spoofed] = y_counts_spoofed.get(y_key_spoofed, 0) + 1
+        
+        # Compute background conditional entropy H(Y_spoofed|X)
+        background_cond_entropy = 0.0
+        for x_key, x_count in x_counts.items():
+            p_x = x_count / n_samples
+            cond_entropy_given_x = 0.0
+            for y_key in y_counts_spoofed.keys():
+                joint_key = (x_key, y_key)
+                if joint_key in background_joint_counts:
+                    p_y_given_x = background_joint_counts[joint_key] / x_count
+                    if p_y_given_x > 0:
+                        cond_entropy_given_x += -p_y_given_x * np.log(p_y_given_x)
+            background_cond_entropy += p_x * cond_entropy_given_x
+        
+        # Cardinality-corrected MI: difference in conditional entropies
+        # MI = H(Y) - H(Y|X), but with correction we use:
+        # MI_corrected = H(Y|X_spoofed) - H(Y|X)
+        mi_corrected = background_cond_entropy - conditional_entropy
+        
+        return float(max(mi_corrected, 0.0))  # Ensure non-negative
 
 
 def jaccard_based_mutual_info(X_multivalue: List[Set], Y_multivalue: List[Set]) -> float:
@@ -303,7 +364,7 @@ def parse_multivalue_feature(feature_vector: np.ndarray, delimiter: str = '_') -
 
 def multivalue_mutual_info_estimator(
     X_feature: np.ndarray, Y_feature: np.ndarray, 
-    algorithm: str = 'jaccard', delimiter: str = '_'
+    algorithm: str = 'jaccard', delimiter: str = '_', cardinality_correction: bool = False
 ) -> float:
     """
     Main entry point for multivalue mutual information computation.
@@ -314,6 +375,10 @@ def multivalue_mutual_info_estimator(
         algorithm: Algorithm to use ('jaccard', 'overlap', 'set_based')
         delimiter: Delimiter used to separate values within each feature (default: '_')
                   Note: '_' is used as default instead of ',' to avoid conflicts with CSV format
+        cardinality_correction: If True, apply correction to prevent cardinality inflation (default: False)
+                               When enabled for set_based algorithm, this helps ensure higher cardinality 
+                               multivalue features don't have artificially higher MI by default.
+                               Similar to MI-numba-randomized approach.
     
     Returns:
         Mutual information score between the two multivalue features
@@ -331,6 +396,6 @@ def multivalue_mutual_info_estimator(
     elif algorithm == 'overlap':
         return multivalue_mi_with_overlap(X_sets, Y_sets)
     elif algorithm == 'set_based':
-        return set_based_mutual_info(X_sets, Y_sets)
+        return set_based_mutual_info(X_sets, Y_sets, cardinality_correction=cardinality_correction)
     else:
         raise ValueError(f"Unknown algorithm: {algorithm}")

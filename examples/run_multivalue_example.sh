@@ -14,8 +14,9 @@
 #   1,sports_music,python_sql,laptop_phone,high
 #   2,music_tech,java_sql,phone_tablet,high
 
-# Three multivalue MI algorithms are available:
+# Four multivalue MI algorithms are available:
 # - MI-multivalue-set (recommended): Direct set-based mutual information
+# - MI-multivalue-set-randomized: Set-based MI with cardinality correction (prevents high-cardinality bias)
 # - MI-multivalue-jaccard: Jaccard similarity-based approach
 # - MI-multivalue-overlap: Overlap-based approach
 
@@ -25,12 +26,24 @@ outrank \
     --task all \
     --data_path examples/multivalue_data.csv \
     --data_source csv-raw \
-    --heuristic MI-multivalue-set \
+    --heuristic MI-multivalue-set-randomized \
     --target_ranking_only True \
     --combination_number_upper_bound 2048 \
     --num_threads 8 \
     --output_folder ./ranking_outputs_multivalue \
     --subsampling 100
+
+# Alternative: Use set-based MI without cardinality correction
+# outrank \
+#     --task all \
+#     --data_path examples/multivalue_data.csv \
+#     --data_source csv-raw \
+#     --heuristic MI-multivalue-set \
+#     --target_ranking_only True \
+#     --combination_number_upper_bound 2048 \
+#     --num_threads 8 \
+#     --output_folder ./ranking_outputs_multivalue \
+#     --subsampling 100
 
 # Alternative: Use Jaccard-based multivalue MI
 # outrank \

@@ -95,9 +95,16 @@ Each multivalue field uses `_` to separate values within that field.
 
 ## Available Algorithms
 
-Three algorithms are available for multivalue MI:
+Four algorithms are available for multivalue MI:
 
-1. **`set_based`** (recommended) - Direct set-based mutual information computation
+1. **`set_based`** (recommended for most cases) - Direct set-based mutual information computation
+2. **`set_based` with cardinality correction** (recommended for high-cardinality features) - Prevents bias toward high-cardinality features
+3. **`jaccard`** - Analyzes structural patterns via neighbor row analysis
+4. **`overlap`** - Based on set overlap and cross-row co-occurrence patterns
+
+### Cardinality Correction
+
+High-cardinality multivalue features (features with many unique values) can have artificially inflated MI scores. Cardinality correction addresses this issue by using a randomization approach similar to `MI-numba-randomized`. This is particularly important when comparing features with different cardinalities.
 2. **`jaccard`** - Analyzes structural patterns via neighbor row analysis
 3. **`overlap`** - Based on set overlap and cross-row co-occurrence patterns
 
@@ -105,13 +112,26 @@ Three algorithms are available for multivalue MI:
 
 When using OutRank's CLI or main API, use these heuristic names:
 
-- `MI-multivalue-set` (recommended)
-- `MI-multivalue-jaccard`
-- `MI-multivalue-overlap`
+- `MI-multivalue-set-randomized` (recommended) - Set-based with cardinality correction
+- `MI-multivalue-set` - Set-based without cardinality correction
+- `MI-multivalue-jaccard` - Jaccard similarity-based
+- `MI-multivalue-overlap` - Overlap-based
 
 ### Example CLI Usage
 
 ```bash
+# Recommended: with cardinality correction
+outrank \
+    --task all \
+    --data_path examples/multivalue_data.csv \
+    --data_source csv-raw \
+    --heuristic MI-multivalue-set-randomized \
+    --target_ranking_only True \
+    --num_threads 8 \
+    --output_folder ./ranking_outputs_multivalue \
+    --subsampling 100
+    
+# Alternative: without cardinality correction
 outrank \
     --task all \
     --data_path examples/multivalue_data.csv \

@@ -100,14 +100,20 @@ def multivalue_mi_overlap(vector_first: np.ndarray, vector_second: np.ndarray) -
         vector_first, vector_second, algorithm='overlap'
     )
 
-def multivalue_mi_set_based(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
-    """Compute mutual information between multivalue features using set-based approach.""" 
+def multivalue_mi_set_based(vector_first: np.ndarray, vector_second: np.ndarray, cardinality_correction: bool = False) -> float:
+    """Compute mutual information between multivalue features using set-based approach.
+    
+    Args:
+        vector_first: First multivalue feature vector
+        vector_second: Second multivalue feature vector
+        cardinality_correction: If True, apply cardinality correction to prevent inflation
+    """ 
     if not multivalue_available:
         logger.warning('Multivalue MI not available, falling back to standard MI')
         return sklearn_MI(vector_first, vector_second)
     
     return ranking_mi_multivalue.multivalue_mutual_info_estimator(
-        vector_first, vector_second, algorithm='set_based'
+        vector_first, vector_second, algorithm='set_based', cardinality_correction=cardinality_correction
     )
 
 def generate_data_for_ranking(combination: tuple[str, str], reference_model_features: list[str], args: Any, tmp_df: pd.DataFrame) -> tuple(np.ndarray, np.ndrray):
@@ -154,6 +160,9 @@ def conduct_feature_ranking(vector_first: np.ndarray, vector_second: np.ndarray,
 
     elif heuristic == 'MI-multivalue-set':
         score = multivalue_mi_set_based(vector_first, vector_second)
+    
+    elif heuristic == 'MI-multivalue-set-randomized':
+        score = multivalue_mi_set_based(vector_first, vector_second, cardinality_correction=True)
 
     elif heuristic == 'correlation-Pearson':
         score = pearsonr(vector_first, vector_second)[0]
