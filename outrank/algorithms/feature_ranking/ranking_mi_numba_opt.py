@@ -11,7 +11,6 @@ def numba_unique(a):
     Identify unique elements and their counts in a non-negative integer array.
     This version finds the max value in one pass to size the container.
     """
-    # Assumes a >= 0
     maxv = 0
     if a.size > 0:
         for i in range(a.size):
@@ -33,7 +32,6 @@ def compute_conditional_entropy(initial_prob, group_size, class_counts):
     - group_size: Number of elements in this group.
     - class_counts: Histogram of Y classes within this group.
     """
-    # Note: Syntax error `_conditional_prob_` corrected to `*`.
     ce = 0.0
     inv_group_size = 1.0 / group_size
     for count in class_counts:
@@ -57,7 +55,6 @@ def build_groups(X):
     f_values, f_counts = numba_unique(X)
     V = f_values.size
 
-    # Build a map from a raw value in X to its index in the f_values array
     vmax = 0
     if V > 0:
         for i in range(V):
@@ -67,14 +64,12 @@ def build_groups(X):
     for i in range(V):
         value_to_group_idx[f_values[i]] = i
 
-    # Calculate starting positions for each group
     group_starts = np.zeros(V, dtype=np.int32)
     run = 0
     for i in range(V):
         group_starts[i] = run
         run += f_counts[i]
 
-    # Fill the positions array by walking through X once
     positions = np.empty(X.size, dtype=np.int32)
     cursors = group_starts.copy()
     for i in range(X.size):
@@ -112,7 +107,6 @@ def compute_entropies_grouped(
             if p > 0.0:
                 full_entropy -= p * np.log(p)
 
-    # Map class value -> class index [0..C) for fast histogramming
     cmax = 0
     if C > 0:
         for i in range(C):
@@ -126,7 +120,6 @@ def compute_entropies_grouped(
     background_cond_entropy = 0.0
     n = Y.size
 
-    # Reusable histograms to avoid reallocating in the loop
     hist = np.zeros(C, dtype=np.uint32)
     hist_spoofed = np.zeros(C, dtype=np.uint32)
 
@@ -138,13 +131,11 @@ def compute_entropies_grouped(
         start = group_starts[gi]
         end = start + group_size
 
-        # Zero out histograms for this group
         for c in range(C):
             hist[c] = 0
             if cardinality_correction:
                 hist_spoofed[c] = 0
 
-        # Build histogram for Y classes in this group
         for pidx in range(start, end):
             original_idx = positions[pidx]
             y_val = Y[original_idx]
@@ -152,7 +143,6 @@ def compute_entropies_grouped(
             hist[class_idx] += 1
 
         if cardinality_correction:
-            # Build histogram for spoofed (shifted) Y classes
             shift = group_size
             for pidx in range(start, end):
                 original_idx = positions[pidx]
@@ -192,8 +182,6 @@ def stratified_subsampling(Y, X, approximation_factor, _f_values_X):
     final_index_array = np.empty(final_space_size, dtype=np.int32)
     index_offset = 0
 
-    # This is still N*V but avoids Numba overhead of np.where. For ultimate speed,
-    # this would also use the grouped index structure.
     for fval in _f_values_X:
         count_collected = 0
         for j in range(X.size):
@@ -206,7 +194,6 @@ def stratified_subsampling(Y, X, approximation_factor, _f_values_X):
                 else:
                     break
 
-    # Slice to the actual number of indices collected
     final_index_array = final_index_array[:index_offset]
     X_sub = X[final_index_array]
     Y_sub = Y[final_index_array]
@@ -233,7 +220,6 @@ def mutual_info_estimator_numba_opt(
     
     all_events = X.size
 
-    # Fast diagonal check without allocating a temporary array
     is_diagonal = True
     if X.size == Y.size:
         for i in range(X.size):
@@ -246,13 +232,11 @@ def mutual_info_estimator_numba_opt(
     if is_diagonal:
         cardinality_correction = False
 
-    # Perform subsampling if requested, before expensive computations
     if approximation_factor < 1.0:
         f_values_full, _ = numba_unique(X)
         Y, X = stratified_subsampling(Y, X, approximation_factor, f_values_full)
         all_events = X.size
 
-    # Build the efficient grouped index structure ONCE on the (potentially subsampled) data
     f_values, f_counts, group_starts, positions = build_groups(X)
 
     joint_entropy_core = compute_entropies_grouped(
