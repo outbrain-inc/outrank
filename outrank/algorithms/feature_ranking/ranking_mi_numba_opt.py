@@ -225,6 +225,12 @@ def mutual_info_estimator_numba_opt(
     The heuristic is MI-numba-randomized, but the code for numba is structured so the execution is faster.
     Core estimator logic. This version uses the efficient grouped approach.
     """
+    
+    if X.size != Y.size:
+        raise ValueError("Input arrays X and Y must have the same length.")
+    if X.size == 0:
+        raise ValueError("Input arrays cannot be empty.")
+    
     all_events = X.size
 
     # Fast diagonal check without allocating a temporary array
