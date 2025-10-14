@@ -218,10 +218,11 @@ def stratified_subsampling(Y, X, approximation_factor, _f_values_X):
     cache=True,
     fastmath=True,
 )
-def mutual_info_estimator_numba_llm_opt(
+def mutual_info_estimator_numba_opt(
     Y, X, approximation_factor=1.0, cardinality_correction=False,
 ):
     """
+    The heuristic is MI-numba-randomized, but the code for numba is structured so the execution is faster.
     Core estimator logic. This version uses the efficient grouped approach.
     """
     all_events = X.size
