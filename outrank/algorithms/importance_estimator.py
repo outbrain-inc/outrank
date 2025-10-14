@@ -34,6 +34,13 @@ except ImportError:
     traceback.print_exc()
     numba_available = False
 
+try:
+    from outrank.algorithms.feature_ranking import ranking_mi_multivalue
+    multivalue_available = True
+except ImportError:
+    traceback.print_exc()
+    multivalue_available = False
+
 def sklearn_MI(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
     return mutual_info_classif(
         vector_first.reshape(-1, 1), vector_second.reshape(-1), discrete_features=True,
@@ -95,6 +102,42 @@ def numba_mi_opt(vector_first: np.ndarray, vector_second: np.ndarray, heuristic:
 def sklearn_mi_adj(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
     return adjusted_mutual_info_score(vector_first, vector_second)
 
+def multivalue_mi_jaccard(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
+    """Compute mutual information between multivalue features using Jaccard similarity."""
+    if not multivalue_available:
+        logger.warning('Multivalue MI not available, falling back to standard MI')
+        return sklearn_MI(vector_first, vector_second)
+    
+    return ranking_mi_multivalue.multivalue_mutual_info_estimator(
+        vector_first, vector_second, algorithm='jaccard'
+    )
+
+def multivalue_mi_overlap(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
+    """Compute mutual information between multivalue features using overlap-based approach."""
+    if not multivalue_available:
+        logger.warning('Multivalue MI not available, falling back to standard MI')
+        return sklearn_MI(vector_first, vector_second)
+    
+    return ranking_mi_multivalue.multivalue_mutual_info_estimator(
+        vector_first, vector_second, algorithm='overlap'
+    )
+
+def multivalue_mi_set_based(vector_first: np.ndarray, vector_second: np.ndarray, cardinality_correction: bool = False) -> float:
+    """Compute mutual information between multivalue features using set-based approach.
+    
+    Args:
+        vector_first: First multivalue feature vector
+        vector_second: Second multivalue feature vector
+        cardinality_correction: If True, apply cardinality correction to prevent inflation
+    """ 
+    if not multivalue_available:
+        logger.warning('Multivalue MI not available, falling back to standard MI')
+        return sklearn_MI(vector_first, vector_second)
+    
+    return ranking_mi_multivalue.multivalue_mutual_info_estimator(
+        vector_first, vector_second, algorithm='set_based', cardinality_correction=cardinality_correction
+    )
+
 def generate_data_for_ranking(combination: tuple[str, str], reference_model_features: list[str], args: Any, tmp_df: pd.DataFrame) -> tuple(np.ndarray, np.ndrray):
     feature_one, feature_two = combination
 
@@ -133,6 +176,18 @@ def conduct_feature_ranking(vector_first: np.ndarray, vector_second: np.ndarray,
 
     elif heuristic == 'AMI':
         score = sklearn_mi_adj(vector_first, vector_second)
+
+    elif heuristic == 'MI-multivalue-jaccard':
+        score = multivalue_mi_jaccard(vector_first, vector_second)
+
+    elif heuristic == 'MI-multivalue-overlap':
+        score = multivalue_mi_overlap(vector_first, vector_second)
+
+    elif heuristic == 'MI-multivalue-set':
+        score = multivalue_mi_set_based(vector_first, vector_second)
+    
+    elif heuristic == 'MI-multivalue-set-randomized':
+        score = multivalue_mi_set_based(vector_first, vector_second, cardinality_correction=True)
 
     elif heuristic == 'correlation-Pearson':
         score = pearsonr(vector_first, vector_second)[0]
