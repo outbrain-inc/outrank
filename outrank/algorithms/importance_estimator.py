@@ -19,7 +19,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.svm import SVC
 
-from outrank.algorithms.feature_ranking import ranking_cov_alignment
+from outrank.algorithms.feature_ranking import ranking_cov_alignment, ranking_mi_numba_opt
 
 logger = logging.getLogger('syn-logger')
 logger.setLevel(logging.DEBUG)
@@ -72,6 +72,25 @@ def numba_mi(vector_first: np.ndarray, vector_second: np.ndarray, heuristic: str
         approximation_factor=np.float32(mi_stratified_sampling_ratio),
         cardinality_correction=cardinality_correction,
     )
+    
+def numba_mi_opt(vector_first: np.ndarray, vector_second: np.ndarray, heuristic: str, mi_stratified_sampling_ratio: float) -> float:
+
+    cardinality_correction = heuristic == 'MI-numba-randomized-opt'
+
+    # Preprocess vector_first to ensure it is a 1D array. This handles cases
+    # where features might be multi-column (e.g., one-hot encoded).
+    if vector_first.ndim == 2:
+        if vector_first.shape[1] > 1:
+            vector_first = np.apply_along_axis(lambda x: np.abs(np.max(x) - np.sum(x)), 1, vector_first)
+        else:
+            vector_first = vector_first.reshape(-1)
+
+    return ranking_mi_numba_opt.mutual_info_estimator_numba_opt(
+        vector_first.astype(np.int32),
+        vector_second.astype(np.int32),
+        approximation_factor=np.float32(mi_stratified_sampling_ratio),
+        cardinality_correction=cardinality_correction,
+    )
 
 def sklearn_mi_adj(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
     return adjusted_mutual_info_score(vector_first, vector_second)
@@ -108,6 +127,9 @@ def conduct_feature_ranking(vector_first: np.ndarray, vector_second: np.ndarray,
 
     elif heuristic == 'MI-numba-randomized':
         score = numba_mi(vector_first, vector_second, heuristic, args.mi_stratified_sampling_ratio)
+    
+    elif heuristic == 'MI-numba-randomized-opt':
+        score = numba_mi_opt(vector_first, vector_second, heuristic, args.mi_stratified_sampling_ratio)
 
     elif heuristic == 'AMI':
         score = sklearn_mi_adj(vector_first, vector_second)
