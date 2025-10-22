@@ -107,7 +107,9 @@ def numba_mi_opt(vector_first: np.ndarray, vector_second: np.ndarray, heuristic:
     )
 
 def sklearn_mi_adj(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
-    return adjusted_mutual_info_score(vector_first, vector_second)
+    # adjusted_mutual_info_score expects 1D arrays
+    v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
+    return adjusted_mutual_info_score(v1, vector_second)
 
 def multivalue_mi_jaccard(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
     """Compute mutual information between multivalue features using Jaccard similarity."""
@@ -205,7 +207,9 @@ def conduct_feature_ranking(vector_first: np.ndarray, vector_second: np.ndarray,
         score = multivalue_mi_set_based(vector_first, vector_second, cardinality_correction=True)
 
     elif heuristic == 'correlation-Pearson':
-        score = pearsonr(vector_first, vector_second)[0]
+        # pearsonr expects 1D arrays
+        v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
+        score = pearsonr(v1, vector_second)[0]
 
     elif heuristic == 'Constant':
         score = 0.0
