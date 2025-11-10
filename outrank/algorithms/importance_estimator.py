@@ -117,8 +117,11 @@ def multivalue_mi_jaccard(vector_first: np.ndarray, vector_second: np.ndarray) -
         logger.warning('Multivalue MI not available, falling back to standard MI')
         return sklearn_MI(vector_first, vector_second)
     
+    # Multivalue MI expects 1D arrays of strings
+    v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
+    v2 = vector_second.reshape(-1) if vector_second.ndim > 1 else vector_second
     return ranking_mi_multivalue.multivalue_mutual_info_estimator(
-        vector_first, vector_second, algorithm='jaccard'
+        v1, v2, algorithm='jaccard'
     )
 
 def multivalue_mi_overlap(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
@@ -127,8 +130,11 @@ def multivalue_mi_overlap(vector_first: np.ndarray, vector_second: np.ndarray) -
         logger.warning('Multivalue MI not available, falling back to standard MI')
         return sklearn_MI(vector_first, vector_second)
     
+    # Multivalue MI expects 1D arrays of strings
+    v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
+    v2 = vector_second.reshape(-1) if vector_second.ndim > 1 else vector_second
     return ranking_mi_multivalue.multivalue_mutual_info_estimator(
-        vector_first, vector_second, algorithm='overlap'
+        v1, v2, algorithm='overlap'
     )
 
 def multivalue_mi_set_based(vector_first: np.ndarray, vector_second: np.ndarray, cardinality_correction: bool = False) -> float:
@@ -143,8 +149,11 @@ def multivalue_mi_set_based(vector_first: np.ndarray, vector_second: np.ndarray,
         logger.warning('Multivalue MI not available, falling back to standard MI')
         return sklearn_MI(vector_first, vector_second)
     
+    # Multivalue MI expects 1D arrays of strings
+    v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
+    v2 = vector_second.reshape(-1) if vector_second.ndim > 1 else vector_second
     return ranking_mi_multivalue.multivalue_mutual_info_estimator(
-        vector_first, vector_second, algorithm='set_based', cardinality_correction=cardinality_correction
+        v1, v2, algorithm='set_based', cardinality_correction=cardinality_correction
     )
 
 def generate_data_for_ranking(combination: tuple[str, str], reference_model_features: list[str], args: Any, tmp_df: pd.DataFrame) -> tuple(np.ndarray, np.ndrray):
