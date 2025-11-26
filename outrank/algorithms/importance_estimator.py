@@ -42,13 +42,19 @@ except ImportError:
     multivalue_available = False
 
 def sklearn_MI(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
+    # Vectors are already shaped correctly by generate_data_for_ranking
+    # vector_first is (n, 1) or (n, m), vector_second is (n,)
+    if vector_first.ndim == 1:
+        vector_first = vector_first.reshape(-1, 1)
     return mutual_info_classif(
-        vector_first.reshape(-1, 1), vector_second.reshape(-1), discrete_features=True,
+        vector_first, vector_second, discrete_features=True,
     )[0]
 
 def sklearn_surrogate(
     vector_first: np.ndarray, vector_second: np.ndarray,  surrogate_model: str,
 ) -> float:
+    # Vectors are already shaped correctly by generate_data_for_ranking
+    # vector_first is (n, 1) or (n, m), so no need to reshape
     if vector_first.ndim == 1:
         vector_first = vector_first.reshape(-1, 1)
 
@@ -65,13 +71,14 @@ def sklearn_surrogate(
 def numba_mi(vector_first: np.ndarray, vector_second: np.ndarray, heuristic: str, mi_stratified_sampling_ratio: float) -> float:
     cardinality_correction = heuristic == 'MI-numba-randomized'
 
-    try:
+    # Vectors are already shaped correctly by generate_data_for_ranking
+    # vector_first is (n, 1) or (n, m), we need to convert to 1D for numba
+    if vector_first.ndim == 2:
         if vector_first.shape[1] == 1:
             vector_first = vector_first.reshape(-1)
         else:
-            vector_first = np.apply_along_axis(lambda x: np.abs(np.max(x) - np.sum(x)), 1, vector_first).reshape(-1)
-    except:
-        pass
+            # Multi-column case: aggregate into single column
+            vector_first = np.apply_along_axis(lambda x: np.abs(np.max(x) - np.sum(x)), 1, vector_first)
 
     return ranking_mi_numba.mutual_info_estimator_numba(
         vector_first.astype(np.int32),
@@ -100,7 +107,9 @@ def numba_mi_opt(vector_first: np.ndarray, vector_second: np.ndarray, heuristic:
     )
 
 def sklearn_mi_adj(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
-    return adjusted_mutual_info_score(vector_first, vector_second)
+    # adjusted_mutual_info_score expects 1D arrays
+    v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
+    return adjusted_mutual_info_score(v1, vector_second)
 
 def multivalue_mi_jaccard(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
     """Compute mutual information between multivalue features using Jaccard similarity."""
@@ -108,8 +117,11 @@ def multivalue_mi_jaccard(vector_first: np.ndarray, vector_second: np.ndarray) -
         logger.warning('Multivalue MI not available, falling back to standard MI')
         return sklearn_MI(vector_first, vector_second)
     
+    # Multivalue MI expects 1D arrays of strings
+    v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
+    v2 = vector_second.reshape(-1) if vector_second.ndim > 1 else vector_second
     return ranking_mi_multivalue.multivalue_mutual_info_estimator(
-        vector_first, vector_second, algorithm='jaccard'
+        v1, v2, algorithm='jaccard'
     )
 
 def multivalue_mi_overlap(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
@@ -118,8 +130,11 @@ def multivalue_mi_overlap(vector_first: np.ndarray, vector_second: np.ndarray) -
         logger.warning('Multivalue MI not available, falling back to standard MI')
         return sklearn_MI(vector_first, vector_second)
     
+    # Multivalue MI expects 1D arrays of strings
+    v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
+    v2 = vector_second.reshape(-1) if vector_second.ndim > 1 else vector_second
     return ranking_mi_multivalue.multivalue_mutual_info_estimator(
-        vector_first, vector_second, algorithm='overlap'
+        v1, v2, algorithm='overlap'
     )
 
 def multivalue_mi_set_based(vector_first: np.ndarray, vector_second: np.ndarray, cardinality_correction: bool = False) -> float:
@@ -134,8 +149,11 @@ def multivalue_mi_set_based(vector_first: np.ndarray, vector_second: np.ndarray,
         logger.warning('Multivalue MI not available, falling back to standard MI')
         return sklearn_MI(vector_first, vector_second)
     
+    # Multivalue MI expects 1D arrays of strings
+    v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
+    v2 = vector_second.reshape(-1) if vector_second.ndim > 1 else vector_second
     return ranking_mi_multivalue.multivalue_mutual_info_estimator(
-        vector_first, vector_second, algorithm='set_based', cardinality_correction=cardinality_correction
+        v1, v2, algorithm='set_based', cardinality_correction=cardinality_correction
     )
 
 def generate_data_for_ranking(combination: tuple[str, str], reference_model_features: list[str], args: Any, tmp_df: pd.DataFrame) -> tuple(np.ndarray, np.ndrray):
@@ -151,6 +169,14 @@ def generate_data_for_ranking(combination: tuple[str, str], reference_model_feat
         vector_first = tmp_df[feature_one].values
 
     vector_second = tmp_df[feature_two].values
+    
+    # Ensure vectors have consistent shape to avoid repeated reshaping downstream
+    # vector_first can be 1D or 2D (multi-column), vector_second is always 1D
+    if vector_first.ndim == 1:
+        vector_first = vector_first.reshape(-1, 1)
+    if vector_second.ndim != 1:
+        vector_second = vector_second.reshape(-1)
+    
     return vector_first, vector_second
 
 
@@ -190,7 +216,9 @@ def conduct_feature_ranking(vector_first: np.ndarray, vector_second: np.ndarray,
         score = multivalue_mi_set_based(vector_first, vector_second, cardinality_correction=True)
 
     elif heuristic == 'correlation-Pearson':
-        score = pearsonr(vector_first, vector_second)[0]
+        # pearsonr expects 1D arrays
+        v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
+        score = pearsonr(v1, vector_second)[0]
 
     elif heuristic == 'Constant':
         score = 0.0
