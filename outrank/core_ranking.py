@@ -318,7 +318,7 @@ def compute_subfeatures(
             for mask_type in mask_types:
                 # Vectorized boolean comparison
                 mask = (feature_first_vec == mask_type[0]) & (feature_second_vec == mask_type[1])
-                new_feature = mask.astype(str)
+                new_feature = mask.astype(int).astype(str)
                 feature_name = (
                     f'SUBFEATURE|{feature_first}|{feature_second}-'
                     + mask_type[0]
