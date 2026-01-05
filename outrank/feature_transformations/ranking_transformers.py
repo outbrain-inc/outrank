@@ -58,7 +58,7 @@ class FeatureTransformerNoise:
                 new_columns['CONTROL-target'] = dataframe[label_column]
 
             new_columns['CONTROL-volume'] = np.array([
-                internal_hash(str(x)) for _, x in dataframe.iterrows()
+                internal_hash(str(x)) for x in range(len(dataframe))
             ])
         else:
             # Not relevant yet; will be if this is useful.
@@ -144,14 +144,12 @@ class FeatureTransformerGeneric:
         return np.array(cvals)
 
     def construct_baseline_features(self, dataframe: Any) -> pd.DataFrame:
-        fvals = []
-        for enx, row in dataframe.iterrows():
-            missing_prop = np.round(
-                row.values.tolist().count('') / dataframe.shape[1], 1,
-            )
-            fvals.append(missing_prop)
-
-        dataframe['BASELINE-MISSING-PROPORTION'] = fvals
+        # Vectorized calculation of missing proportion
+        # Count empty strings in each row
+        missing_counts = (dataframe == '').sum(axis=1)
+        missing_prop = np.round(missing_counts / dataframe.shape[1], 1)
+        
+        dataframe['BASELINE-MISSING-PROPORTION'] = missing_prop
         dataframe['BASELINE-DUMMY'] = 0
 
         return dataframe

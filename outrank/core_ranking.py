@@ -105,7 +105,8 @@ def mixed_rank_graph(
     all_columns = input_dataframe.columns
 
     triplets = []
-    tmp_df = input_dataframe.copy().astype('category')
+    # Remove unnecessary copy - astype creates a copy anyway
+    tmp_df = input_dataframe.astype('category')
     out_time_struct = {}
 
     # Handle cont. types prior to interaction evaluation
@@ -216,7 +217,8 @@ def compute_combined_features(
         combined_feature = input_dataframe[new_combination[0]].astype(str)
         for feature in new_combination[1:]:
             combined_feature += input_dataframe[feature].astype(str)
-        combined_feature = combined_feature.apply(lambda x: xxhash.xxh64(x).hexdigest())
+        # Vectorized xxhash computation - use .values to avoid pandas overhead
+        combined_feature = pd.Series([xxhash.xxh64(x).hexdigest() for x in combined_feature.values], index=combined_feature.index)
         ftr_name = join_string.join(new_combination)
         return ftr_name, combined_feature
 

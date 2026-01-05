@@ -194,12 +194,10 @@ def outrank_task_conduct_ranking(args: Any) -> None:
             redundancies_df.FeatureA !=
             args.label_column
         ]
+        # Vectorized string filtering - faster than apply
         redundancies_df = redundancies_df[
-            redundancies_df.apply(
-                lambda x: (' AND_REL ' not in x.FeatureA)
-                and (' AND_REL ' not in x.FeatureB),
-                axis=1,
-            )
+            ~redundancies_df['FeatureA'].str.contains(' AND_REL ') &
+            ~redundancies_df['FeatureB'].str.contains(' AND_REL ')
         ]
 
         # normalize
@@ -213,25 +211,24 @@ def outrank_task_conduct_ranking(args: Any) -> None:
             redundancies_df.Score - redundancies_df.Score.min()
         ) / (redundancies_df.Score.max() - redundancies_df.Score.min())
 
-        # create dicts
-        relevance_dict = {
-            row.FeatureA: row.score for _,
-            row in relevance_df.iterrows()
-        }
-        relations_dict = {
-            (row.FeatureA, row.FeatureB): row.score
-            for _, row in relations_df.iterrows()
-        }
-        relations_dict.update(
-            {
-                (row.FeatureB, row.FeatureA): row.score
-                for _, row in relations_df.iterrows()
-            },
-        )
-        redundancy_dict = {
-            (row.FeatureA, row.FeatureB): row.score
-            for _, row in redundancies_df.iterrows()
-        }
+        # create dicts - use vectorized approach with zip and dict comprehension
+        relevance_dict = dict(zip(relevance_df['FeatureA'], relevance_df['score']))
+        
+        # For relations_dict, create tuples efficiently
+        relations_dict = dict(zip(
+            zip(relations_df['FeatureA'], relations_df['FeatureB']),
+            relations_df['score']
+        ))
+        # Add reversed tuples
+        relations_dict.update(dict(zip(
+            zip(relations_df['FeatureB'], relations_df['FeatureA']),
+            relations_df['score']
+        )))
+        
+        redundancy_dict = dict(zip(
+            zip(redundancies_df['FeatureA'], redundancies_df['FeatureB']),
+            redundancies_df['score']
+        ))
 
         # compute 3mr ranks
         mrmrmr_ranking = rank_features_3MR(

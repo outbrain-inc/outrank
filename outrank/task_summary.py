@@ -19,15 +19,19 @@ def read_and_sort_triplets(triplets_path: str) -> pd.DataFrame:
 
 def generate_final_ranking(triplets: pd.DataFrame, label_column: str) -> list[list[Any]]:
     """Generate final ranking based on the label column."""
-    final_ranking = []
-    for _, row in triplets.iterrows():
-        feature_a, feature_b = row['FeatureA'], row['FeatureB']
-        score = row['Score']
-        if label_column == feature_a.split('-')[0]:
-            final_ranking.append([feature_b, score])
-        elif label_column == feature_b.split('-')[0]:
-            final_ranking.append([feature_a, score])
-    return final_ranking
+    # Vectorized approach: extract first part before '-' for comparison
+    feature_a_prefix = triplets['FeatureA'].str.split('-').str[0]
+    feature_b_prefix = triplets['FeatureB'].str.split('-').str[0]
+    
+    # Create mask for each condition
+    mask_a = feature_a_prefix == label_column
+    mask_b = feature_b_prefix == label_column
+    
+    # Select relevant features and scores
+    ranking_from_a = triplets.loc[mask_a, ['FeatureB', 'Score']].values.tolist()
+    ranking_from_b = triplets.loc[mask_b, ['FeatureA', 'Score']].values.tolist()
+    
+    return ranking_from_a + ranking_from_b
 
 
 def create_final_dataframe(final_ranking: list[list[Any]], heuristic: str) -> pd.DataFrame:
@@ -63,24 +67,24 @@ def store_summary_files(final_df: pd.DataFrame, output_folder: str, heuristic: s
 def handle_interaction_order(final_df: pd.DataFrame, output_folder: str, heuristic: str, interaction_order: int) -> None:
     """Handle the interaction order if it is greater than 1."""
     if interaction_order > 1:
-        feature_store = defaultdict(list)
-        for _, row in final_df.iterrows():
-            fname = row['Feature']
-            score = row[f'Score {heuristic}']
-            if 'AND' in fname:
-                for el in fname.split('-')[0].split(' AND '):
-                    feature_store[el].append(score)
-
-        final_aggregate_df = pd.DataFrame([
-            {
-                'Feature': k,
-                f'Combined score (order: {interaction_order}, {heuristic})': np.median(v),
-            }
-            for k, v in feature_store.items()
-        ])
-        final_aggregate_df.to_csv(
-            os.path.join(output_folder, 'feature_singles_aggregated.tsv'), sep='\t', index=False,
-        )
+        # Filter rows containing 'AND'
+        and_features = final_df[final_df['Feature'].str.contains('AND', na=False)].copy()
+        
+        if not and_features.empty:
+            # Extract the prefix before '-' and split by ' AND '
+            and_features['prefix'] = and_features['Feature'].str.split('-').str[0]
+            and_features['elements'] = and_features['prefix'].str.split(' AND ')
+            
+            # Explode to create one row per element
+            exploded = and_features.explode('elements')
+            
+            # Group by element and compute median score
+            final_aggregate_df = exploded.groupby('elements')[f'Score {heuristic}'].median().reset_index()
+            final_aggregate_df.columns = ['Feature', f'Combined score (order: {interaction_order}, {heuristic})']
+            
+            final_aggregate_df.to_csv(
+                os.path.join(output_folder, 'feature_singles_aggregated.tsv'), sep='\t', index=False,
+            )
 
 
 def filter_transformers_only(final_df: pd.DataFrame, output_folder: str) -> None:
