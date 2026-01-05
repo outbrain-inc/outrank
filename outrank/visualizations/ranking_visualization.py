@@ -177,16 +177,14 @@ def visualize_barplots(
     heuristic: str,
 ) -> None:
     sns.set(font_scale=8)
-    feature_ranks_rows = []
-    for _, row in triplets.iterrows():
-        feature_A = row['FeatureA']
-        feature_B = row['FeatureB']
-        if label in feature_A:
-            feature_ranks_rows.append([feature_B, row.Score])
-        elif label in feature_B:
-            feature_ranks_rows.append([feature_A, row.Score])
-
-    feature_ranks: pd.DataFrame = pd.DataFrame(feature_ranks_rows, columns=['Feature', 'Value'])
+    # Vectorized approach to extract features
+    mask_a = triplets['FeatureA'].str.contains(label)
+    mask_b = triplets['FeatureB'].str.contains(label)
+    
+    feature_ranks_a = triplets.loc[mask_a, ['FeatureB', 'Score']].rename(columns={'FeatureB': 'Feature', 'Score': 'Value'})
+    feature_ranks_b = triplets.loc[mask_b, ['FeatureA', 'Score']].rename(columns={'FeatureA': 'Feature', 'Score': 'Value'})
+    
+    feature_ranks = pd.concat([feature_ranks_a, feature_ranks_b], ignore_index=True)
     feature_ranks = feature_ranks[~feature_ranks['Feature'].str.contains(label)]
     if not os.path.exists(reference_json):
         reference_json = ''
