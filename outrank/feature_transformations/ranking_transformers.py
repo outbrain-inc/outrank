@@ -58,7 +58,7 @@ class FeatureTransformerNoise:
                 new_columns['CONTROL-target'] = dataframe[label_column]
 
             new_columns['CONTROL-volume'] = np.array([
-                internal_hash(str(x)) for x in range(len(dataframe))
+                internal_hash(str(idx)) for idx in dataframe.index
             ])
         else:
             # Not relevant yet; will be if this is useful.

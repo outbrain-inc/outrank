@@ -330,12 +330,14 @@ def compute_subfeatures(
 
         elif '->' in seed_pair:
             for unique_target_feature_value in unique_feature_second:
-                # Vectorized approach: create mask and use numpy operations
+                # Vectorized approach: create mask and use simpler string operations
                 mask = feature_second_vec == unique_target_feature_value
-                tmp_new_feature = np.where(mask, 
-                                          np.char.add(feature_first_vec.astype(str), 
-                                                     np.char.add('AND', feature_second_vec.astype(str))),
-                                          '')
+                # Simpler concatenation for readability
+                tmp_new_feature = np.where(
+                    mask,
+                    feature_first_vec.astype(str) + 'AND' + feature_second_vec.astype(str),
+                    ''
+                )
                 feature_name_final = (
                     'SUBFEATURE-' + feature_first + '&' + unique_target_feature_value
                 )
@@ -380,9 +382,9 @@ def compute_feature_memory_consumption(input_dataframe: pd.DataFrame, args: Any)
     """An approximation of how much feature take up"""
     output_storage_features = defaultdict(set)
     for col in input_dataframe.columns:
-        # Vectorized string operations
+        # Vectorized string operations - use byte length for accurate memory calculation
         specific_column = input_dataframe[col].astype(str).str.strip()
-        col_size = specific_column.str.len().sum() / input_dataframe.shape[0]
+        col_size = specific_column.str.encode('utf-8').str.len().sum() / input_dataframe.shape[0]
         output_storage_features[col] = col_size
     return output_storage_features
 
