@@ -67,11 +67,12 @@ def store_summary_files(final_df: pd.DataFrame, output_folder: str, heuristic: s
 def handle_interaction_order(final_df: pd.DataFrame, output_folder: str, heuristic: str, interaction_order: int) -> None:
     """Handle the interaction order if it is greater than 1."""
     if interaction_order > 1:
-        # Filter rows containing 'AND'
-        and_features = final_df[final_df['Feature'].str.contains('AND', na=False)].copy()
+        # Filter rows containing 'AND' - no need for copy since we're not modifying final_df
+        and_features = final_df[final_df['Feature'].str.contains('AND', na=False)]
         
         if not and_features.empty:
             # Extract the prefix before '-' and split by ' AND '
+            and_features = and_features.copy()  # Only copy when we need to add columns
             and_features['prefix'] = and_features['Feature'].str.split('-').str[0]
             and_features['elements'] = and_features['prefix'].str.split(' AND ')
             

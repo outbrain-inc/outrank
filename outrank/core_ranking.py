@@ -313,7 +313,6 @@ def compute_subfeatures(
             unique_feature_first = subframe[feature_first].unique()
 
             # Vectorized approach: create all combinations at once
-            import itertools
             mask_types = list(itertools.product(unique_feature_first, unique_feature_second))
 
             for mask_type in mask_types:
@@ -382,9 +381,9 @@ def compute_feature_memory_consumption(input_dataframe: pd.DataFrame, args: Any)
     """An approximation of how much feature take up"""
     output_storage_features = defaultdict(set)
     for col in input_dataframe.columns:
-        # Vectorized string operations - use byte length for accurate memory calculation
+        # More efficient byte length calculation using map
         specific_column = input_dataframe[col].astype(str).str.strip()
-        col_size = specific_column.str.encode('utf-8').str.len().sum() / input_dataframe.shape[0]
+        col_size = specific_column.map(lambda x: len(x.encode('utf-8'))).sum() / input_dataframe.shape[0]
         output_storage_features[col] = col_size
     return output_storage_features
 
