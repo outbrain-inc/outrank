@@ -217,8 +217,8 @@ def compute_combined_features(
         combined_feature = input_dataframe[new_combination[0]].astype(str)
         for feature in new_combination[1:]:
             combined_feature += input_dataframe[feature].astype(str)
-        # Vectorized xxhash computation - use .values to avoid pandas overhead
-        combined_feature = pd.Series([xxhash.xxh64(x).hexdigest() for x in combined_feature.values], index=combined_feature.index)
+        # Use map for better performance - avoids intermediate list creation
+        combined_feature = combined_feature.map(lambda x: xxhash.xxh64(x).hexdigest())
         ftr_name = join_string.join(new_combination)
         return ftr_name, combined_feature
 
@@ -381,9 +381,9 @@ def compute_feature_memory_consumption(input_dataframe: pd.DataFrame, args: Any)
     """An approximation of how much feature take up"""
     output_storage_features = defaultdict(set)
     for col in input_dataframe.columns:
-        # More efficient byte length calculation using map
+        # More efficient byte length calculation using map with default UTF-8 encoding
         specific_column = input_dataframe[col].astype(str).str.strip()
-        col_size = specific_column.map(lambda x: len(x.encode('utf-8'))).sum() / input_dataframe.shape[0]
+        col_size = specific_column.map(lambda x: len(x.encode())).sum() / input_dataframe.shape[0]
         output_storage_features[col] = col_size
     return output_storage_features
 
