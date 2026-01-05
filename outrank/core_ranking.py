@@ -305,54 +305,41 @@ def compute_subfeatures(
 
         subframe = input_dataframe[[feature_first, feature_second]]
         unique_feature_second = subframe[feature_second].unique()
-        feature_first_vec = subframe[feature_first].tolist()
-        feature_second_vec = subframe[feature_second].tolist()
-        out_template_feature = [
-            (a, b) for a, b in zip(feature_first_vec, feature_second_vec)
-        ]
+        # Use numpy arrays directly instead of converting to list
+        feature_first_vec = subframe[feature_first].values
+        feature_second_vec = subframe[feature_second].values
 
         if '<->' in seed_pair:
             unique_feature_first = subframe[feature_first].unique()
 
-            mask_types = []
-            for unique_target_feature_value in unique_feature_second:
-                for unique_seed_feature_value in unique_feature_first:
-                    mask_types.append(
-                        (unique_seed_feature_value, unique_target_feature_value),
-                    )
+            # Vectorized approach: create all combinations at once
+            import itertools
+            mask_types = list(itertools.product(unique_feature_first, unique_feature_second))
 
             for mask_type in mask_types:
-                new_feature = []
-                for value_tuple in out_template_feature:
-                    if (
-                        value_tuple[0] == mask_type[0]
-                        and value_tuple[1] == mask_type[1]
-                    ):
-                        new_feature.append(str(1))
-                    else:
-                        new_feature.append(str(0))
+                # Vectorized boolean comparison
+                mask = (feature_first_vec == mask_type[0]) & (feature_second_vec == mask_type[1])
+                new_feature = mask.astype(str)
                 feature_name = (
                     f'SUBFEATURE|{feature_first}|{feature_second}-'
                     + mask_type[0]
                     + '&'
                     + mask_type[1]
                 )
-                new_feature_hash[feature_name] = new_feature
-
-            del new_feature
+                new_feature_hash[feature_name] = new_feature.tolist()
 
         elif '->' in seed_pair:
             for unique_target_feature_value in unique_feature_second:
-                tmp_new_feature = [
-                    'AND'.join(
-                        x,
-                    ) if x[1] == unique_target_feature_value else ''
-                    for x in out_template_feature
-                ]
+                # Vectorized approach: create mask and use numpy operations
+                mask = feature_second_vec == unique_target_feature_value
+                tmp_new_feature = np.where(mask, 
+                                          np.char.add(feature_first_vec.astype(str), 
+                                                     np.char.add('AND', feature_second_vec.astype(str))),
+                                          '')
                 feature_name_final = (
                     'SUBFEATURE-' + feature_first + '&' + unique_target_feature_value
                 )
-                new_feature_hash[feature_name_final] = tmp_new_feature
+                new_feature_hash[feature_name_final] = tmp_new_feature.tolist()
 
     tmp_df = pd.DataFrame(new_feature_hash)
     input_dataframe = pd.concat([input_dataframe, tmp_df], axis=1)
@@ -379,12 +366,8 @@ def compute_coverage(input_dataframe: pd.DataFrame, args: Any) -> dict[str, set[
     output_storage_cov = defaultdict(set)
     all_missing_symbols = set(args.missing_value_symbols.split(','))
     for column in input_dataframe:
-        all_missing = sum(
-            [
-                input_dataframe[column].values.tolist().count(x)
-                for x in all_missing_symbols
-            ],
-        )
+        # Vectorized approach using isin instead of counting manually
+        all_missing = input_dataframe[column].isin(all_missing_symbols).sum()
 
         output_storage_cov[column] = (
             1 - (all_missing / input_dataframe.shape[0])
@@ -397,13 +380,9 @@ def compute_feature_memory_consumption(input_dataframe: pd.DataFrame, args: Any)
     """An approximation of how much feature take up"""
     output_storage_features = defaultdict(set)
     for col in input_dataframe.columns:
-        specific_column = [
-            str(x).strip() for x in input_dataframe[col].astype(str).values.tolist()
-        ]
-        col_size = sum(
-            len(x.encode())
-            for x in specific_column
-        ) / input_dataframe.shape[0]
+        # Vectorized string operations
+        specific_column = input_dataframe[col].astype(str).str.strip()
+        col_size = specific_column.str.len().sum() / input_dataframe.shape[0]
         output_storage_features[col] = col_size
     return output_storage_features
 
