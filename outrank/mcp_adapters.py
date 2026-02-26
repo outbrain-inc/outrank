@@ -15,6 +15,9 @@ import sys
 from typing import Any
 
 
+MAX_FILE_SIZE_MB = 500
+
+
 def configure_logging_for_mcp() -> None:
     """Redirect ALL logging output to stderr.
 
@@ -45,45 +48,20 @@ def configure_logging_for_mcp() -> None:
 def build_ranking_namespace(**overrides: Any) -> argparse.Namespace:
     """Build an argparse.Namespace matching all CLI flags.
 
-    Defaults are hardcoded here (mirrored from __main__.py) to avoid
-    importing __main__ and triggering its logging.basicConfig().
+    Defaults come from cli_defaults.py (single source of truth),
+    with MCP-specific overrides applied on top.
     """
-    defaults = {
-        'task': 'ranking',
-        'minibatch_size': 2**14,
-        'output_folder': '/tmp/outrank_mcp_output',
-        'data_source': 'csv-raw',
-        'data_path': None,
-        'subsampling': 10,
-        'combination_number_upper_bound': 2**15,
-        'missing_value_symbols': ',{}',
-        'heuristic': 'MI-numba-randomized',
-        'include_noise_baseline_features': 'False',
-        'include_cardinality_in_feature_names': 'True',
-        'image_format': 'pdf',
-        'num_threads': 4,
-        'label_column': 'label',
-        'max_unique_hist_constraint': 30_000,
-        'transformers': 'none',
-        'rare_value_count_upper_bound': 1,
-        'feature_set_focus': None,
-        'interaction_order': 1,
-        'reference_model_JSON': '',
-        'target_ranking_only': 'True',
-        'explode_multivalue_features': 'False',
-        'subfeature_mapping': 'False',
-        'num_synthetic_features': 100,
-        'tldr': 'False',
-        'num_synthetic_rows': 10000,
-        'generator_type': 'naive',
-        'output_synthetic_df_name': 'test_data_synthetic',
-        'disable_tqdm': 'True',  # Always suppress in MCP context
-        'mi_stratified_sampling_ratio': 1.0,
-        'compute_jmi': 'False',
-        'jmi_top_k': 50,
-        'compute_interaction_info': 'False',
-        'interaction_info_top_k': 30,
-    }
+    from outrank.cli_defaults import CLI_DEFAULTS
+
+    defaults = dict(CLI_DEFAULTS)
+    # MCP-specific overrides: headless mode
+    defaults['task'] = 'ranking'
+    defaults['output_folder'] = '/tmp/outrank_mcp_output'
+    defaults['data_source'] = 'csv-raw'
+    defaults['num_threads'] = 4
+    defaults['disable_tqdm'] = 'True'
+    defaults['tldr'] = 'False'
+    defaults['num_synthetic_rows'] = 10000
     # Apply caller overrides, converting Python bools to OutRank string convention
     for key, value in overrides.items():
         if isinstance(value, bool):
@@ -91,6 +69,30 @@ def build_ranking_namespace(**overrides: Any) -> argparse.Namespace:
         defaults[key] = value
 
     return argparse.Namespace(**defaults)
+
+
+def validate_data_path(data_path: str | None) -> None:
+    """Validate data_path exists and is accessible. Raises ValueError on failure."""
+    if data_path is None:
+        raise ValueError('data_path must not be None')
+    if not os.path.exists(data_path):
+        raise ValueError(f"data_path '{data_path}' does not exist")
+    if os.path.isfile(data_path):
+        size_mb = os.path.getsize(data_path) / (1024 * 1024)
+        if size_mb > MAX_FILE_SIZE_MB:
+            raise ValueError(
+                f"File '{data_path}' is {size_mb:.0f} MB, "
+                f'exceeding the {MAX_FILE_SIZE_MB} MB limit',
+            )
+    elif os.path.isdir(data_path):
+        csv_path = os.path.join(data_path, 'data.csv')
+        if os.path.isfile(csv_path):
+            size_mb = os.path.getsize(csv_path) / (1024 * 1024)
+            if size_mb > MAX_FILE_SIZE_MB:
+                raise ValueError(
+                    f"File '{csv_path}' is {size_mb:.0f} MB, "
+                    f'exceeding the {MAX_FILE_SIZE_MB} MB limit',
+                )
 
 
 def run_ranking_safe(args: argparse.Namespace) -> dict[str, Any]:
@@ -103,6 +105,16 @@ def run_ranking_safe(args: argparse.Namespace) -> dict[str, Any]:
     import time
 
     from outrank.task_ranking import outrank_task_conduct_ranking
+
+    # Validate inputs before launching the ranking pipeline
+    try:
+        validate_data_path(args.data_path)
+    except ValueError as exc:
+        return {
+            'output_folder': args.output_folder,
+            'elapsed_seconds': 0,
+            'error': str(exc),
+        }
 
     start = time.monotonic()
     error_msg = None

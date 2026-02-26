@@ -366,6 +366,9 @@ def get_importances_estimate_nonmyopic(args: Any, tmp_df: pd.DataFrame, pairwise
     if len(feature_cols) == 0:
         return None
 
+    # Clamp top_k to available features
+    top_k = min(top_k, len(feature_cols))
+
     # Screen to top-k by pairwise MI (exclude label from candidates)
     if pairwise_mi_dict is not None:
         feature_scores = {}
@@ -446,6 +449,9 @@ def compute_interaction_information_for_pairs(tmp_df: pd.DataFrame, args: Any, p
         return None
 
     feature_cols = [c for c in tmp_df.columns if c != label_col]
+
+    # Clamp top_k to available features
+    top_k = min(top_k, len(feature_cols))
 
     # Screen to top-k by pairwise MI (exclude label from candidates)
     if pairwise_mi_dict is not None:

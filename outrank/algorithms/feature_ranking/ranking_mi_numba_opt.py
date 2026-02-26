@@ -162,7 +162,12 @@ def compute_entropies_grouped(
     if not cardinality_correction:
         return full_entropy - conditional_entropy
     else:
-        return -conditional_entropy + background_cond_entropy
+        # CC estimates can go slightly negative due to finite-sample noise;
+        # MI is non-negative by definition, so clamp to zero.
+        result = -conditional_entropy + background_cond_entropy
+        if result < np.float32(0.0):
+            return np.float32(0.0)
+        return result
 
 
 @njit(
@@ -358,7 +363,11 @@ def _compute_mi_contingency_cc(Y, X, all_events, dx, dy):
                     p_y_given_x_s = np.float32(nxy_s) * inv_nx
                     bg_cond_entropy -= px * p_y_given_x_s * np.log(p_y_given_x_s)
 
-    return -cond_entropy + bg_cond_entropy
+    # CC estimates can go slightly negative; MI is non-negative by definition.
+    result = -cond_entropy + bg_cond_entropy
+    if result < np.float32(0.0):
+        return np.float32(0.0)
+    return result
 
 
 @njit(

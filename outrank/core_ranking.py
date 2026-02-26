@@ -34,6 +34,7 @@ from outrank.core_utils import generic_line_parser
 from outrank.core_utils import get_num_of_instances
 from outrank.core_utils import internal_hash
 from outrank.core_utils import is_prior_heuristic
+from outrank.core_utils import MinibatchResult
 from outrank.core_utils import NominalFeatureSummary
 from outrank.core_utils import NumericFeatureSummary
 from outrank.feature_transformations.ranking_transformers import FeatureTransformerGeneric
@@ -592,7 +593,15 @@ def compute_batch_ranking(
 
 
 def get_grouped_df(importances_df_list: list[tuple[str, str, float]]) -> pd.DataFrame:
-    """A helper method that enables median-based aggregation after processing"""
+    """Median-based aggregation of per-batch importance triplets.
+
+    Note: median aggregation across minibatches is NOT the same as computing
+    MI on the pooled data. For features whose score distribution across
+    batches is long-tailed (e.g., a feature is informative in some data
+    segments but not others), median introduces a downward bias compared
+    to a single full-data MI estimate. This is a deliberate robustness
+    trade-off — median is resistant to outlier batches.
+    """
 
     importances_df = pd.DataFrame(importances_df_list, columns=['FeatureA', 'FeatureB', 'Score'])
     if importances_df.empty:
@@ -755,16 +764,16 @@ def estimate_importances_minibatches(
     local_pbar.set_description('Wrapping up')
     local_pbar.close()
 
-    return (
-        step_timing_checkpoints,
-        get_grouped_df(importances_df),
-        GLOBAL_CARDINALITY_STORAGE.copy(),
-        bounds_storage_batch,
-        memory_storage_batch,
-        local_coverage_object,
-        GLOBAL_RARE_VALUE_STORAGE.copy(),
-        GLOBAL_PRIOR_COMB_COUNTS.copy(),
-        GLOBAL_COUNTS_STORAGE.copy(),
-        last_jmi_ranking,
-        last_interaction_info,
+    return MinibatchResult(
+        step_timing_checkpoints=step_timing_checkpoints,
+        mutual_information_estimates=get_grouped_df(importances_df),
+        cardinality_object=GLOBAL_CARDINALITY_STORAGE.copy(),
+        bounds_object_storage=bounds_storage_batch,
+        memory_object_storage=memory_storage_batch,
+        coverage_object=local_coverage_object,
+        rare_value_storage=GLOBAL_RARE_VALUE_STORAGE.copy(),
+        prior_comb_counts=GLOBAL_PRIOR_COMB_COUNTS.copy(),
+        item_counts=GLOBAL_COUNTS_STORAGE.copy(),
+        jmi_ranking=last_jmi_ranking,
+        interaction_info=last_interaction_info,
     )

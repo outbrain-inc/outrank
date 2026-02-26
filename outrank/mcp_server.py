@@ -27,6 +27,7 @@ from outrank.mcp_adapters import (
     build_ranking_namespace,
     dataframe_to_ranking_json,
     run_ranking_safe,
+    validate_data_path,
 )
 
 logger = logging.getLogger('outrank.mcp')
@@ -238,6 +239,7 @@ def outrank_dataset_info(
         data_source: Data source format. Use "csv-raw" for plain CSV files.
         sample_rows: Number of sample rows to include in the response.
     """
+    validate_data_path(data_path)
     csv_path = _resolve_csv_path(data_path, data_source)
     df = pd.read_csv(csv_path, nrows=sample_rows + 1)
     df_full_shape = pd.read_csv(csv_path, usecols=[0])
@@ -340,6 +342,7 @@ def outrank_score_pair(
     """
     from outrank.algorithms.importance_estimator import conduct_feature_ranking
 
+    validate_data_path(data_path)
     csv_path = _resolve_csv_path(data_path, data_source)
     df = pd.read_csv(csv_path, usecols=[feature_a, feature_b])
     if subsampling > 1:
@@ -395,6 +398,7 @@ def outrank_compute_interaction_info(
     """
     from outrank.algorithms.feature_ranking import ranking_mi_numba_cmi
 
+    validate_data_path(data_path)
     csv_path = _resolve_csv_path(data_path, data_source)
     df = pd.read_csv(csv_path, usecols=[feature_a, feature_b, label_column])
 

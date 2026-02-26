@@ -142,7 +142,10 @@ def _compute_entropies_grouped(
     if not cardinality_correction:
         return full_entropy - conditional_entropy
     else:
-        return -conditional_entropy + background_cond_entropy
+        result = -conditional_entropy + background_cond_entropy
+        if result < np.float32(0.0):
+            return np.float32(0.0)
+        return result
 
 
 # --- End copied section ---
@@ -329,7 +332,10 @@ def _compute_mi_contingency_cc_local(Y, X, all_events, dx, dy):
                     p_y_given_x_s = np.float32(nxy_s) * inv_nx
                     bg_cond_entropy -= px * p_y_given_x_s * np.log(p_y_given_x_s)
 
-    return -cond_entropy + bg_cond_entropy
+    result = -cond_entropy + bg_cond_entropy
+    if result < np.float32(0.0):
+        return np.float32(0.0)
+    return result
 
 
 # --- End MI contingency table fast-paths ---
