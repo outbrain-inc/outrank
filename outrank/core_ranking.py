@@ -109,13 +109,15 @@ def mixed_rank_graph(
     all_columns = input_dataframe.columns
 
     triplets = []
-    tmp_df = input_dataframe.copy().astype('category')
     out_time_struct = {}
 
     # Handle cont. types prior to interaction evaluation
     pbar.set_description('Encoding columns')
     start_enc_timer = timer()
-    tmp_df = pd.DataFrame({k : tmp_df[k].cat.codes for k in all_columns})
+    # pd.factorize is single-pass per column, avoids full .copy().astype('category')
+    tmp_df = pd.DataFrame(
+        {k: pd.factorize(input_dataframe[k])[0].astype(np.int32) for k in all_columns},
+    )
 
     end_enc_timer = timer()
     out_time_struct['encoding_columns'] = end_enc_timer - start_enc_timer
@@ -142,9 +144,14 @@ def mixed_rank_graph(
     # Map the scoring calls to the worker pool
     pbar.set_description('Allocating thread pool')
 
-    # starmap is an alternative that is slower unfortunately (but nicer)
+    # Pre-extract column arrays to avoid pickling the full DataFrame per worker.
+    # For reference_model heuristics we still need the DataFrame for multi-column access.
+    _col_arrays = {col: np.ascontiguousarray(tmp_df[col].values, dtype=np.int32) for col in tmp_df.columns}
+    _needs_df = bool(args.reference_model_JSON) or args.heuristic in {'surrogate-SGD', 'surrogate-SVM', 'surrogate-SGD-RP', 'surrogate-SGD-SVD'}
+    _tmp_df_for_workers = tmp_df if _needs_df else None
+
     def get_grounded_importances_estimate(combination: tuple[str]) -> Any:
-        return get_importances_estimate_pairwise(combination, reference_model_features, args, tmp_df=tmp_df)
+        return get_importances_estimate_pairwise(combination, reference_model_features, args, tmp_df=_tmp_df_for_workers, col_arrays=_col_arrays)
 
     start_enc_timer = timer()
     with cpu_pool as p:
@@ -402,17 +409,12 @@ def compute_coverage(input_dataframe: pd.DataFrame, args: Any) -> dict[str, set[
     """Compute coverage of features, incrementally"""
     output_storage_cov = defaultdict(set)
     all_missing_symbols = set(args.missing_value_symbols.split(','))
+    n_rows = input_dataframe.shape[0]
+    missing_arr = np.array(list(all_missing_symbols))
     for column in input_dataframe:
-        all_missing = sum(
-            [
-                input_dataframe[column].values.tolist().count(x)
-                for x in all_missing_symbols
-            ],
-        )
-
-        output_storage_cov[column] = (
-            1 - (all_missing / input_dataframe.shape[0])
-        ) * 100
+        col_vals = input_dataframe[column].values
+        all_missing = np.isin(col_vals, missing_arr).sum()
+        output_storage_cov[column] = (1 - (all_missing / n_rows)) * 100
 
     return output_storage_cov
 
@@ -420,15 +422,11 @@ def compute_coverage(input_dataframe: pd.DataFrame, args: Any) -> dict[str, set[
 def compute_feature_memory_consumption(input_dataframe: pd.DataFrame, args: Any) -> dict[str, set[str]]:
     """An approximation of how much feature take up"""
     output_storage_features = defaultdict(set)
+    n_rows = input_dataframe.shape[0]
     for col in input_dataframe.columns:
-        specific_column = [
-            str(x).strip() for x in input_dataframe[col].astype(str).values.tolist()
-        ]
-        col_size = sum(
-            len(x.encode())
-            for x in specific_column
-        ) / input_dataframe.shape[0]
-        output_storage_features[col] = col_size
+        # np.char operations on object arrays are faster than pandas .str accessor
+        str_arr = input_dataframe[col].values.astype(str)
+        output_storage_features[col] = np.char.str_len(str_arr).sum() / n_rows
     return output_storage_features
 
 
@@ -443,10 +441,11 @@ def compute_value_counts(input_dataframe: pd.DataFrame, args: Any):
     rare_value_count_upper_bound = args.rare_value_count_upper_bound
 
     for column in input_dataframe.columns:
-        main_values = input_dataframe[column].values
-        for value in main_values:
-            if value not in ignored_values:
-                global_storage[(column, value)] += 1
+        col_counts = Counter(input_dataframe[column].values.tolist())
+        for value, cnt in col_counts.items():
+            key = (column, value)
+            if key not in ignored_values:
+                global_storage[key] += cnt
 
     keys_to_remove = []
     for key, val in global_storage.items():
@@ -478,8 +477,7 @@ def compute_cardinalities(input_dataframe: pd.DataFrame, pbar: Any, max_unique_h
         if column not in GLOBAL_COUNTS_STORAGE:
             GLOBAL_COUNTS_STORAGE[column] = PrimitiveConstrainedCounter(max_unique_hist_constraint)
 
-        for value in column_data.values:
-            GLOBAL_COUNTS_STORAGE[column].add(value)
+        GLOBAL_COUNTS_STORAGE[column].batch_add(column_data.values.tolist())
 
         for unique_value in unique_values:
             if unique_value:

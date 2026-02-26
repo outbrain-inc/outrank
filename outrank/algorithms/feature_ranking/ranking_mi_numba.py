@@ -13,7 +13,7 @@ np.random.seed(123)
     cache=True,
     fastmath=True,
     error_model='numpy',
-    boundscheck=True,
+    boundscheck=False,
 )
 def numba_unique(a):
     """Identify unique elements in an array, fast"""
@@ -32,7 +32,7 @@ def numba_unique(a):
     cache=True,
     fastmath=True,
     error_model='numpy',
-    boundscheck=True,
+    boundscheck=False,
 )
 def compute_conditional_entropy(Y_classes, class_values, class_var_shape, initial_prob, nonzero_counts):
     conditional_entropy = 0.0
@@ -54,7 +54,7 @@ def compute_conditional_entropy(Y_classes, class_values, class_var_shape, initia
     parallel=False,
     fastmath=True,
     error_model='numpy',
-    boundscheck=True,
+    boundscheck=False,
 )
 def compute_entropies(
     X, Y, all_events, f_values, f_value_counts, cardinality_correction,
@@ -153,7 +153,7 @@ def stratified_subsampling(Y, X, approximation_factor, _f_values_X):
     cache=True,
     fastmath=True,
     error_model='numpy',
-    boundscheck=True,
+    boundscheck=False,
 )
 def mutual_info_estimator_numba(
     Y, X, approximation_factor=1.0, cardinality_correction=False,
