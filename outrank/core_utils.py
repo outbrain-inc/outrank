@@ -85,6 +85,8 @@ class BatchRankingSummary:
 
     triplet_scores: list[tuple[str, str, float]]
     step_times: dict[str, Any]
+    jmi_ranking: Any = None
+    interaction_info: Any = None
 
 
 def display_random_tip() -> None:

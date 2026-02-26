@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import gzip
 import json
 import logging
 import os
@@ -9,7 +10,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import gzip
 import zstandard as zstd
 
 from outrank.algorithms.importance_estimator import rank_features_3MR
@@ -103,6 +103,8 @@ def outrank_task_conduct_ranking(args: Any) -> None:
                     RARE_VALUE_STORAGE,
                     GLOBAL_PRIOR_COMB_COUNTS,
                     GLOBAL_ITEM_COUNTS,
+                    jmi_ranking_result,
+                    interaction_info_result,
                 ) = estimate_importances_minibatches(**cmd_arguments)
 
             global_bounds_storage += bounds_object_storage
@@ -295,6 +297,18 @@ def outrank_task_conduct_ranking(args: Any) -> None:
     dfx = pd.DataFrame(all_timings)
     dfx.to_json(f'{args.output_folder}/timings.json')
     write_json_dump_to_file(args, f'{args.output_folder}/arguments.json')
+
+    # Write JMI rankings (last batch — JMI is deterministic per encoded batch)
+    if jmi_ranking_result is not None:
+        jmi_path = os.path.join(args.output_folder, 'jmi_feature_ranking.tsv')
+        jmi_ranking_result.to_csv(jmi_path, sep='\t', index=False)
+        logging.info(f'JMI feature ranking written to {jmi_path}')
+
+    # Write interaction information
+    if interaction_info_result is not None:
+        ii_path = os.path.join(args.output_folder, 'interaction_information.tsv')
+        interaction_info_result.to_csv(ii_path, sep='\t', index=False)
+        logging.info(f'Interaction information written to {ii_path}')
 
     logging.info(
         f'Finished with ranking! Result stored as: {args.output_folder}/pairwise_ranks.tsv. Cleaning up tmp files ..',

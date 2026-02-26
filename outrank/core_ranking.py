@@ -19,6 +19,10 @@ import xxhash
 import zstandard as zstd
 
 from outrank.algorithms.importance_estimator import \
+    compute_interaction_information_for_pairs
+from outrank.algorithms.importance_estimator import \
+    get_importances_estimate_nonmyopic
+from outrank.algorithms.importance_estimator import \
     get_importances_estimate_pairwise
 from outrank.algorithms.sketches.counting_counters_ordinary import \
     PrimitiveConstrainedCounter
@@ -161,8 +165,30 @@ def mixed_rank_graph(
         final_triplets.append(inv)
         final_triplets.append(triplet)
 
+    # Optional JMI and interaction information (gated by CLI flags, default off)
+    jmi_ranking = None
+    interaction_info = None
+    pairwise_mi_dict = None
+
+    if getattr(args, 'compute_jmi', 'False') == 'True' or getattr(args, 'compute_interaction_info', 'False') == 'True':
+        pairwise_mi_dict = {(t[0], t[1]): t[2] for t in triplets}
+
+    if getattr(args, 'compute_jmi', 'False') == 'True':
+        pbar.set_description('Computing JMI ranking')
+        jmi_ranking = get_importances_estimate_nonmyopic(
+            args, tmp_df, pairwise_mi_dict=pairwise_mi_dict,
+            top_k=int(getattr(args, 'jmi_top_k', 50)),
+        )
+
+    if getattr(args, 'compute_interaction_info', 'False') == 'True':
+        pbar.set_description('Computing interaction information')
+        interaction_info = compute_interaction_information_for_pairs(
+            tmp_df, args, pairwise_mi_dict,
+            top_k=int(getattr(args, 'interaction_info_top_k', 30)),
+        )
+
     pbar.set_description('Proceeding to the next batch of data')
-    return BatchRankingSummary(final_triplets, out_time_struct)
+    return BatchRankingSummary(final_triplets, out_time_struct, jmi_ranking, interaction_info)
 
 
 def enrich_with_transformations(
@@ -616,6 +642,8 @@ def estimate_importances_minibatches(
     bounds_storage_batch = []
     memory_storage_batch = []
     step_timing_checkpoints = []
+    last_jmi_ranking = None
+    last_interaction_info = None
 
     local_coverage_object = defaultdict(list)
     local_pbar = tqdm.tqdm(
@@ -676,6 +704,11 @@ def estimate_importances_minibatches(
             step_timing_checkpoints.append(importances_batch.step_times)
             importances_df += importances_batch.triplet_scores
 
+            if importances_batch.jmi_ranking is not None:
+                last_jmi_ranking = importances_batch.jmi_ranking
+            if importances_batch.interaction_info is not None:
+                last_interaction_info = importances_batch.interaction_info
+
             if args.heuristic != 'Constant':
                 local_pbar.set_description('Creating checkpoint')
                 checkpoint_importances_df(importances_df)
@@ -718,6 +751,11 @@ def estimate_importances_minibatches(
         bounds_storage_batch.append(bounds_storage)
         checkpoint_importances_df(importances_df)
 
+        if importances_batch.jmi_ranking is not None:
+            last_jmi_ranking = importances_batch.jmi_ranking
+        if importances_batch.interaction_info is not None:
+            last_interaction_info = importances_batch.interaction_info
+
     local_pbar.set_description('Wrapping up')
     local_pbar.close()
 
@@ -731,4 +769,6 @@ def estimate_importances_minibatches(
         GLOBAL_RARE_VALUE_STORAGE.copy(),
         GLOBAL_PRIOR_COMB_COUNTS.copy(),
         GLOBAL_COUNTS_STORAGE.copy(),
+        last_jmi_ranking,
+        last_interaction_info,
     )

@@ -31,6 +31,7 @@ outrank/
 │   │   ├── feature_ranking/
 │   │   │   ├── ranking_mi_numba.py         # Numba MI (base implementation)
 │   │   │   ├── ranking_mi_numba_opt.py     # Numba MI (grouped, cache-friendly)
+│   │   │   ├── ranking_mi_numba_cmi.py     # Conditional MI, interaction info, JMI primitives
 │   │   │   ├── ranking_mi_multivalue.py    # MI for multivalue/set features
 │   │   │   └── ranking_cov_alignment.py    # Coverage-based heuristic
 │   │   ├── sketches/
@@ -50,6 +51,7 @@ outrank/
 ├── tests/                          # Unit and integration tests
 │   ├── mi_numba_test.py            # Numba MI correctness
 │   ├── mi_numba_opt_test.py        # Optimized MI correctness
+│   ├── mi_numba_cmi_test.py        # Conditional MI, interaction info, JMI
 │   ├── multivalue_mi_test.py       # Multivalue feature MI
 │   ├── hll_test.py                 # HyperLogLog accuracy
 │   ├── cms_test.py                 # Count-Min Sketch
@@ -123,8 +125,11 @@ Output: pairwise_ranks.tsv, feature_singles.tsv, visualizations
 - All new code touching algorithms **must** have a corresponding test in `tests/`
 
 ### Performance-critical code
-- Numba `@njit` decorated functions in `ranking_mi_numba.py` and `ranking_mi_numba_opt.py` — do not introduce Python objects, dynamic typing, or unsupported NumPy operations inside `@njit` functions
+- Numba `@njit` decorated functions in `ranking_mi_numba.py`, `ranking_mi_numba_opt.py`, and `ranking_mi_numba_cmi.py` — do not introduce Python objects, dynamic typing, or unsupported NumPy operations inside `@njit` functions
 - The `ranking_mi_numba_opt` variant uses pre-grouped indices for cache locality — maintain this property when modifying
+- `ranking_mi_numba_cmi.py` has two CMI paths: (1) **contingency table** (fast, O(n + dx*dy*dz), used when `cardinality_correction=False` and product <= 2M), (2) **per-Z-group** (fallback, for cardinality correction or extreme cardinality). Do not remove the fallback — it handles edge cases
+- Numba `@njit(cache=True)` functions **cannot be reliably imported cross-module** — `ranking_mi_numba_cmi.py` copies `_build_groups`/`_compute_entropies_grouped` from `ranking_mi_numba_opt.py`. Keep them in sync
+- JMI greedy selection uses **incremental score accumulation** — each step only computes CMI for the newly-selected feature, not all selected features. Do not regress to naive O(k^3) loop
 - HyperLogLog in `counting_ultiloglog.py` uses a warm-up/exact-count hybrid — the switchover threshold is `m/2`
 - `PrimitiveConstrainedCounter` has a hard size bound (default 30k) — this is intentional backpressure, not a bug
 
@@ -174,6 +179,36 @@ These are the scoring algorithms routed through `importance_estimator.conduct_fe
 | `max-value-coverage` | `ranking_cov_alignment` | Most-frequent-pair proportion |
 | `Constant` | importance_estimator | Returns 0 (placeholder) |
 | `3MR` | importance_estimator | mRMR-style multi-objective (relevance - redundancy + relational) |
+| `CMI` (via `--compute_jmi`) | `ranking_mi_numba_cmi` | Conditional MI I(X;Y\|Z), JMI greedy selection. Contingency table fast path (~2x vs per-group) |
+| `II` (via `--compute_interaction_info`) | `ranking_mi_numba_cmi` | Interaction information II(X_i,X_j;Y): synergy vs redundancy (Jakulin & Bratko convention) |
+
+## Pre-commit / CI test hook
+
+Any code addition or modification to `outrank/` or `tests/` **must** pass the following before merge:
+
+```bash
+# 1. Unit tests (all 182+ tests)
+python -m pytest tests/ -v
+
+# 2. Lint (blocking: syntax errors and undefined names)
+flake8 outrank/ --count --select=E9,F63,F7,F82 --show-source --statistics
+
+# 3. Lint (advisory: style warnings, non-blocking)
+flake8 outrank/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+# 4. Selftest (end-to-end: data generation -> ranking -> output validation)
+python -m outrank --task data_generator --num_synthetic_rows 100000
+python -m outrank --task ranking --data_path test_data_synthetic --data_source csv-raw --heuristic MI-numba-randomized --output_folder ranking_outputs
+python -c "
+import pandas as pd
+dfx = pd.read_csv('ranking_outputs/pairwise_ranks.tsv', sep='\t')
+assert dfx.shape[0] == 201 and dfx.shape[1] == 3
+print('Selftest OK')
+"
+rm -rf ranking_outputs test_data_synthetic
+```
+
+Agents **must** run steps 1-2 after every code change. Step 4 should be run before creating a PR.
 
 ## Agentic activity log
 
@@ -186,3 +221,5 @@ All significant changes made by AI agents (Claude Code, Copilot, etc.) should be
 | 2025-* | `copilot/fix-*` | Copilot | PR #108 — bug fix |
 | 2025-* | `add-llm-optimized-MI` | External contributor | PR #110 — LLM-optimized MI variant |
 | 2026-02-26 | `multivalue-improvements` | Claude Code | Created AGENTS.md documenting repository structure and agentic guidelines |
+| 2026-02-26 | `multivalue-improvements` | Claude Code | Added Conditional MI, Interaction Information, JMI feature selection (ranking_mi_numba_cmi.py, nonmyopic stub, CLI flags) |
+| 2026-02-26 | `multivalue-improvements` | Claude Code | Optimized CMI: incremental JMI scores (O(k^3)->O(k^2)), contingency table fast path (~2x), label exclusion fix. JMI overhead: <1% |

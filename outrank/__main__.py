@@ -249,6 +249,33 @@ def main():
         help='If < 1.0, MI algorithm will further subsample data in stratified manner (equal distributions per value if possible).',
     )
 
+    parser.add_argument(
+        '--compute_jmi',
+        choices=['False', 'True'],
+        default='False',
+        help='If True, compute JMI (Joint Mutual Information) greedy feature selection after pairwise ranking. Detects XOR-like synergies missed by pairwise MI.',
+    )
+
+    parser.add_argument(
+        '--jmi_top_k',
+        type=int,
+        default=50,
+        help='Number of top pairwise-MI features to consider for JMI ranking (The Screening Rule). Higher = more thorough but slower (O(k^2) CMI calls).',
+    )
+
+    parser.add_argument(
+        '--compute_interaction_info',
+        choices=['False', 'True'],
+        default='False',
+        help='If True, compute interaction information II(X_i,X_j;Y) for top feature pairs. Negative II = synergy, positive = redundancy.',
+    )
+
+    parser.add_argument(
+        '--interaction_info_top_k',
+        type=int,
+        default=30,
+        help='Number of top features to compute pairwise interaction information for.',
+    )
 
     args = parser.parse_args()
 
