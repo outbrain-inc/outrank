@@ -424,9 +424,7 @@ def compute_feature_memory_consumption(input_dataframe: pd.DataFrame, args: Any)
     output_storage_features = defaultdict(set)
     n_rows = input_dataframe.shape[0]
     for col in input_dataframe.columns:
-        # np.char operations on object arrays are faster than pandas .str accessor
-        str_arr = input_dataframe[col].values.astype(str)
-        output_storage_features[col] = np.char.str_len(str_arr).sum() / n_rows
+        output_storage_features[col] = input_dataframe[col].astype(str).str.len().sum() / n_rows
     return output_storage_features
 
 
