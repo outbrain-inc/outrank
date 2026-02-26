@@ -32,4 +32,7 @@ setuptools.setup(
     zip_safe=True,
     include_package_data=True,
     install_requires=_parse_requirements('requirements.txt'),
+    extras_require={
+        'mcp': ['mcp>=1.2.0'],
+    },
 )

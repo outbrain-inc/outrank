@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "outrank": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "outrank.mcp_server"]
+    }
+  }
+}
