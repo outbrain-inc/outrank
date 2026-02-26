@@ -2,6 +2,8 @@
 
 All tests call tool functions directly as regular Python functions — no MCP
 transport needed. The functions return JSON strings which we parse and assert on.
+
+Requires: pip install mcp>=1.2.0  (or pip install outrank[mcp])
 """
 from __future__ import annotations
 
@@ -15,6 +17,9 @@ import tempfile
 import numpy as np
 import pandas as pd
 import pytest
+
+# Skip entire module if mcp is not installed (it's an optional dependency)
+pytest.importorskip('mcp', reason='mcp package not installed (optional dependency)')
 
 
 # ---------------------------------------------------------------------------
