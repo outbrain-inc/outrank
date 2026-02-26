@@ -1,0 +1,89 @@
+cff-version: 1.2.0
+message: "If you use OutRank, please cite the following work."
+title: "OutRank"
+type: software
+authors:
+  - family-names: Skrlj
+    given-names: Blaz
+    orcid: "https://orcid.org/0000-0002-5765-2836"
+  - family-names: Mramor
+    given-names: Blaz
+license: BSD-3-Clause
+repository-code: "https://github.com/outbrain/outrank"
+url: "https://outbrain-inc.github.io/outrank/outrank.html"
+version: "0.97.7"
+date-released: "2023-09-14"
+keywords:
+  - feature-ranking
+  - mutual-information
+  - AutoML
+  - recommender-systems
+  - sparse-data
+preferred-citation:
+  type: conference-paper
+  title: "OutRank: Speeding up AutoML-Based Model Search for Large Sparse Data Sets with Cardinality-Aware Feature Ranking"
+  authors:
+    - family-names: Skrlj
+      given-names: Blaz
+    - family-names: Mramor
+      given-names: Blaz
+  year: 2023
+  collection-title: "Proceedings of the 17th ACM Conference on Recommender Systems"
+  collection-type: proceedings
+  conference:
+    name: "RecSys '23"
+    city: Singapore
+    country: SG
+  start: 1078
+  end: 1083
+  pages: 6
+  isbn: "9798400702419"
+  doi: "10.1145/3604915.3610636"
+  url: "https://doi.org/10.1145/3604915.3610636"
+  publisher:
+    name: "Association for Computing Machinery"
+    city: "New York"
+    country: US
+  keywords:
+    - Feature ranking
+    - massive data sets
+    - AutoML
+    - recommender systems
+  abstract: >-
+    The design of modern recommender systems relies on understanding which
+    parts of the feature space are relevant for solving a given recommendation
+    task. However, real-world data sets in this domain are often characterized
+    by their large size, sparsity, and noise, making it challenging to identify
+    meaningful signals. Feature ranking represents an efficient branch of
+    algorithms that can help address these challenges by identifying the most
+    informative features and facilitating the automated search for more compact
+    and better-performing models (AutoML). We introduce OutRank, a system for
+    versatile feature ranking and data quality-related anomaly detection.
+    OutRank was built with categorical data in mind, utilizing a variant of
+    mutual information that is normalized with regard to the noise produced by
+    features of the same cardinality. We further extend the similarity measure
+    by incorporating information on feature similarity and combined relevance.
+references:
+  - type: article
+    title: "Drifter: Efficient Online Feature Monitoring for Improved Data Integrity in Large-Scale Recommendation Systems"
+    authors:
+      - family-names: Skrlj
+        given-names: Blaz
+      - family-names: Ki-Tov
+        given-names: Nir
+      - family-names: Edelist
+        given-names: Lee
+      - family-names: Silberstein
+        given-names: Natalia
+      - family-names: Weisman-Zohar
+        given-names: Hila
+      - family-names: Mramor
+        given-names: Blaz
+      - family-names: Kopic
+        given-names: Davorin
+      - family-names: Ziporin
+        given-names: Naama
+    year: 2023
+    journal: "ArXiv"
+    volume: "abs/2309.08617"
+    url: "https://api.semanticscholar.org/CorpusID:262045065"
