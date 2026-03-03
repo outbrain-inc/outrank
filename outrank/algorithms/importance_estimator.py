@@ -19,7 +19,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.svm import SVC
 
-from outrank.algorithms.feature_ranking import ranking_cov_alignment, ranking_mi_numba_opt
+from outrank.algorithms.feature_ranking import ranking_cov_alignment
+from outrank.algorithms.feature_ranking import ranking_mi_numba_opt
 
 logger = logging.getLogger('syn-logger')
 logger.setLevel(logging.DEBUG)
@@ -27,12 +28,10 @@ logger.setLevel(logging.DEBUG)
 NUM_FOLDS  = 2
 SVD_DIMS = 8
 
-try:
-    from outrank.algorithms.feature_ranking import ranking_mi_numba
-    numba_available = True
-except ImportError:
-    traceback.print_exc()
-    numba_available = False
+# Lazy-import: ranking_mi_numba triggers ~520ms of Numba JIT compilation.
+# Defer until numba_mi() is actually called (dead code for default usage).
+ranking_mi_numba = None
+numba_available = True
 
 try:
     from outrank.algorithms.feature_ranking import ranking_mi_multivalue
@@ -40,6 +39,13 @@ try:
 except ImportError:
     traceback.print_exc()
     multivalue_available = False
+
+try:
+    from outrank.algorithms.feature_ranking import ranking_mi_numba_cmi
+    cmi_available = True
+except ImportError:
+    traceback.print_exc()
+    cmi_available = False
 
 def sklearn_MI(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
     # Vectors are already shaped correctly by generate_data_for_ranking
@@ -69,6 +75,14 @@ def sklearn_surrogate(
     return 1 + np.median(scores)
 
 def numba_mi(vector_first: np.ndarray, vector_second: np.ndarray, heuristic: str, mi_stratified_sampling_ratio: float) -> float:
+    global ranking_mi_numba
+    if ranking_mi_numba is None:
+        try:
+            from outrank.algorithms.feature_ranking import ranking_mi_numba as _mod
+            ranking_mi_numba = _mod
+        except ImportError:
+            traceback.print_exc()
+            raise
     cardinality_correction = heuristic == 'MI-numba-randomized'
 
     # Vectors are already shaped correctly by generate_data_for_ranking
@@ -80,28 +94,34 @@ def numba_mi(vector_first: np.ndarray, vector_second: np.ndarray, heuristic: str
             # Multi-column case: aggregate into single column
             vector_first = np.apply_along_axis(lambda x: np.abs(np.max(x) - np.sum(x)), 1, vector_first)
 
+    # Hot path (col_arrays): arrays are already contiguous int32 from core_ranking.
+    # Safety fallback for non-col_arrays callers.
+    v1 = vector_first if vector_first.dtype == np.int32 else vector_first.astype(np.int32)
+    v2 = vector_second if vector_second.dtype == np.int32 else vector_second.astype(np.int32)
     return ranking_mi_numba.mutual_info_estimator_numba(
-        vector_first.astype(np.int32),
-        vector_second.astype(np.int32),
+        v1, v2,
         approximation_factor=np.float32(mi_stratified_sampling_ratio),
         cardinality_correction=cardinality_correction,
     )
-    
+
 def numba_mi_opt(vector_first: np.ndarray, vector_second: np.ndarray, heuristic: str, mi_stratified_sampling_ratio: float) -> float:
 
-    cardinality_correction = heuristic == 'MI-numba-randomized-opt'
+    cardinality_correction = 'randomized' in heuristic
 
-    # Preprocess vector_first to ensure it is a 1D array. This handles cases
-    # where features might be multi-column (e.g., one-hot encoded).
+    # Ensure 1D. generate_data_for_ranking now skips reshape for Numba
+    # heuristics, so this is typically a no-op. Kept for safety.
     if vector_first.ndim == 2:
         if vector_first.shape[1] > 1:
             vector_first = np.apply_along_axis(lambda x: np.abs(np.max(x) - np.sum(x)), 1, vector_first)
         else:
-            vector_first = vector_first.reshape(-1)
+            vector_first = vector_first.ravel()
 
+    # Hot path (col_arrays): arrays are already contiguous int32 from core_ranking.
+    # Safety fallback for non-col_arrays callers (tests, standalone usage).
+    v1 = vector_first if vector_first.dtype == np.int32 else vector_first.astype(np.int32)
+    v2 = vector_second if vector_second.dtype == np.int32 else vector_second.astype(np.int32)
     return ranking_mi_numba_opt.mutual_info_estimator_numba_opt(
-        vector_first.astype(np.int32),
-        vector_second.astype(np.int32),
+        v1, v2,
         approximation_factor=np.float32(mi_stratified_sampling_ratio),
         cardinality_correction=cardinality_correction,
     )
@@ -116,12 +136,12 @@ def multivalue_mi_jaccard(vector_first: np.ndarray, vector_second: np.ndarray) -
     if not multivalue_available:
         logger.warning('Multivalue MI not available, falling back to standard MI')
         return sklearn_MI(vector_first, vector_second)
-    
+
     # Multivalue MI expects 1D arrays of strings
     v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
     v2 = vector_second.reshape(-1) if vector_second.ndim > 1 else vector_second
     return ranking_mi_multivalue.multivalue_mutual_info_estimator(
-        v1, v2, algorithm='jaccard'
+        v1, v2, algorithm='jaccard',
     )
 
 def multivalue_mi_overlap(vector_first: np.ndarray, vector_second: np.ndarray) -> float:
@@ -129,34 +149,72 @@ def multivalue_mi_overlap(vector_first: np.ndarray, vector_second: np.ndarray) -
     if not multivalue_available:
         logger.warning('Multivalue MI not available, falling back to standard MI')
         return sklearn_MI(vector_first, vector_second)
-    
+
     # Multivalue MI expects 1D arrays of strings
     v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
     v2 = vector_second.reshape(-1) if vector_second.ndim > 1 else vector_second
     return ranking_mi_multivalue.multivalue_mutual_info_estimator(
-        v1, v2, algorithm='overlap'
+        v1, v2, algorithm='overlap',
     )
 
 def multivalue_mi_set_based(vector_first: np.ndarray, vector_second: np.ndarray, cardinality_correction: bool = False) -> float:
     """Compute mutual information between multivalue features using set-based approach.
-    
+
     Args:
         vector_first: First multivalue feature vector
         vector_second: Second multivalue feature vector
         cardinality_correction: If True, apply cardinality correction to prevent inflation
-    """ 
+    """
     if not multivalue_available:
         logger.warning('Multivalue MI not available, falling back to standard MI')
         return sklearn_MI(vector_first, vector_second)
-    
+
     # Multivalue MI expects 1D arrays of strings
     v1 = vector_first.reshape(-1) if vector_first.ndim > 1 else vector_first
     v2 = vector_second.reshape(-1) if vector_second.ndim > 1 else vector_second
     return ranking_mi_multivalue.multivalue_mutual_info_estimator(
-        v1, v2, algorithm='set_based', cardinality_correction=cardinality_correction
+        v1, v2, algorithm='set_based', cardinality_correction=cardinality_correction,
     )
 
-def generate_data_for_ranking(combination: tuple[str, str], reference_model_features: list[str], args: Any, tmp_df: pd.DataFrame) -> tuple(np.ndarray, np.ndrray):
+def numba_cmi(vector_first: np.ndarray, vector_second: np.ndarray, vector_condition: np.ndarray, heuristic: str, mi_stratified_sampling_ratio: float) -> float:
+    """Compute I(X;Y|Z) using the Numba-JIT'd CMI kernel."""
+    cardinality_correction = 'randomized' in heuristic
+
+    if vector_first.ndim == 2:
+        vector_first = vector_first[:, 0] if vector_first.shape[1] == 1 else np.apply_along_axis(lambda x: np.abs(np.max(x) - np.sum(x)), 1, vector_first)
+    if vector_condition.ndim == 2:
+        vector_condition = vector_condition[:, 0] if vector_condition.shape[1] == 1 else np.apply_along_axis(lambda x: np.abs(np.max(x) - np.sum(x)), 1, vector_condition)
+
+    v1 = vector_first if vector_first.dtype == np.int32 else vector_first.astype(np.int32)
+    v2 = vector_second if vector_second.dtype == np.int32 else vector_second.astype(np.int32)
+    vc = vector_condition if vector_condition.dtype == np.int32 else vector_condition.astype(np.int32)
+    return float(
+        ranking_mi_numba_cmi.conditional_mutual_info_numba(
+            v2, v1, vc,
+            np.float32(mi_stratified_sampling_ratio),
+            cardinality_correction,
+        ),
+    )
+
+
+def numba_interaction_info(vector_x1: np.ndarray, vector_x2: np.ndarray, vector_y: np.ndarray, mi_stratified_sampling_ratio: float = 1.0, cardinality_correction: bool = False) -> float:
+    """Compute II(X1, X2; Y) using the Jakulin & Bratko convention."""
+    if vector_x1.ndim == 2:
+        vector_x1 = vector_x1[:, 0] if vector_x1.shape[1] == 1 else np.apply_along_axis(lambda x: np.abs(np.max(x) - np.sum(x)), 1, vector_x1)
+    if vector_x2.ndim == 2:
+        vector_x2 = vector_x2[:, 0] if vector_x2.shape[1] == 1 else np.apply_along_axis(lambda x: np.abs(np.max(x) - np.sum(x)), 1, vector_x2)
+
+    vy = vector_y if vector_y.dtype == np.int32 else vector_y.astype(np.int32)
+    vx1 = vector_x1 if vector_x1.dtype == np.int32 else vector_x1.astype(np.int32)
+    vx2 = vector_x2 if vector_x2.dtype == np.int32 else vector_x2.astype(np.int32)
+    return ranking_mi_numba_cmi.interaction_information_numba(
+        vy, vx1, vx2,
+        np.float32(mi_stratified_sampling_ratio),
+        cardinality_correction,
+    )
+
+
+def generate_data_for_ranking(combination: tuple[str, str], reference_model_features: list[str], args: Any, tmp_df: pd.DataFrame = None, col_arrays: dict | None = None) -> tuple:
     feature_one, feature_two = combination
 
     if feature_one == args.label_column:
@@ -165,18 +223,25 @@ def generate_data_for_ranking(combination: tuple[str, str], reference_model_feat
 
     if args.reference_model_JSON:
         vector_first = tmp_df[list(reference_model_features) + [feature_one]].values
+    elif col_arrays is not None:
+        vector_first = col_arrays[feature_one]
     else:
         vector_first = tmp_df[feature_one].values
 
-    vector_second = tmp_df[feature_two].values
-    
-    # Ensure vectors have consistent shape to avoid repeated reshaping downstream
-    # vector_first can be 1D or 2D (multi-column), vector_second is always 1D
-    if vector_first.ndim == 1:
-        vector_first = vector_first.reshape(-1, 1)
+    if col_arrays is not None:
+        vector_second = col_arrays[feature_two]
+    else:
+        vector_second = tmp_df[feature_two].values
+
+    # Numba heuristics operate on 1D int32 arrays — skip the 2D reshape round-trip.
+    # sklearn heuristics expect (n,1) for vector_first.
+    _numba_heuristics = {'MI-numba-randomized', 'MI-numba-randomized-opt'}
+    if args.heuristic not in _numba_heuristics:
+        if vector_first.ndim == 1:
+            vector_first = vector_first.reshape(-1, 1)
     if vector_second.ndim != 1:
         vector_second = vector_second.reshape(-1)
-    
+
     return vector_first, vector_second
 
 
@@ -194,10 +259,7 @@ def conduct_feature_ranking(vector_first: np.ndarray, vector_second: np.ndarray,
     elif heuristic == 'max-value-coverage':
         score = ranking_cov_alignment.max_pair_coverage(vector_first, vector_second)
 
-    elif heuristic == 'MI-numba-randomized':
-        score = numba_mi(vector_first, vector_second, heuristic, args.mi_stratified_sampling_ratio)
-    
-    elif heuristic == 'MI-numba-randomized-opt':
+    elif heuristic in {'MI-numba-randomized', 'MI-numba-randomized-opt'}:
         score = numba_mi_opt(vector_first, vector_second, heuristic, args.mi_stratified_sampling_ratio)
 
     elif heuristic == 'AMI':
@@ -211,7 +273,7 @@ def conduct_feature_ranking(vector_first: np.ndarray, vector_second: np.ndarray,
 
     elif heuristic == 'MI-multivalue-set':
         score = multivalue_mi_set_based(vector_first, vector_second)
-    
+
     elif heuristic == 'MI-multivalue-set-randomized':
         score = multivalue_mi_set_based(vector_first, vector_second, cardinality_correction=True)
 
@@ -229,10 +291,10 @@ def conduct_feature_ranking(vector_first: np.ndarray, vector_second: np.ndarray,
 
     return score
 
-def get_importances_estimate_pairwise(combination: tuple[str, str], reference_model_features: list[str], args: Any, tmp_df: pd.DataFrame) -> tuple[str, str, float]:
+def get_importances_estimate_pairwise(combination: tuple[str, str], reference_model_features: list[str], args: Any, tmp_df: pd.DataFrame = None, col_arrays: dict | None = None) -> tuple[str, str, float]:
 
     feature_one, feature_two = combination
-    inputs_encoded, output_encoded = generate_data_for_ranking(combination, reference_model_features, args, tmp_df)
+    inputs_encoded, output_encoded = generate_data_for_ranking(combination, reference_model_features, args, tmp_df, col_arrays=col_arrays)
 
     ranking_score = conduct_feature_ranking(inputs_encoded, output_encoded, args)
 
@@ -279,8 +341,153 @@ def rank_features_3MR(
 
     return pd.DataFrame({'Feature': ranked_features, '3MR_Ranking': range(1, len(ranked_features) + 1)})
 
-def get_importances_estimate_nonmyopic(args: Any, tmp_df: pd.DataFrame):
-    pass
+def get_importances_estimate_nonmyopic(args: Any, tmp_df: pd.DataFrame, pairwise_mi_dict: dict | None = None, top_k: int = 50) -> pd.DataFrame | None:
+    """JMI greedy forward selection: selects features that maximize
+    sum of I(X_k; Y | X_j) over already-selected features X_j.
+
+    The Screening Rule: only considers top_k features by pairwise MI
+    to keep the O(top_k^2) CMI calls tractable.
+
+    Uses incremental score accumulation: when a new feature X_j is added
+    to the selected set, we only compute I(X_k; Y | X_j) for the new X_j
+    and add it to the running score. This reduces CMI calls from O(k^3)
+    to exactly k*(k-1)/2.
+    """
+    if not cmi_available:
+        logger.warning('CMI module not available, skipping nonmyopic ranking')
+        return None
+
+    label_col = args.label_column
+    if label_col not in tmp_df.columns:
+        logger.warning(f'Label column {label_col} not in dataframe, skipping JMI')
+        return None
+
+    feature_cols = [c for c in tmp_df.columns if c != label_col]
+    if len(feature_cols) == 0:
+        return None
+
+    # Clamp top_k to available features
+    top_k = min(top_k, len(feature_cols))
+
+    # Screen to top-k by pairwise MI (exclude label from candidates)
+    if pairwise_mi_dict is not None:
+        feature_scores = {}
+        for (fa, fb), score in pairwise_mi_dict.items():
+            if fb == label_col and fa != label_col:
+                feature_scores[fa] = max(feature_scores.get(fa, -np.inf), score)
+            if fa == label_col and fb != label_col:
+                feature_scores[fb] = max(feature_scores.get(fb, -np.inf), score)
+        ranked = sorted(feature_scores.items(), key=lambda x: x[1], reverse=True)
+        candidate_features = [f for f, _ in ranked[:top_k] if f in tmp_df.columns]
+    else:
+        candidate_features = feature_cols[:top_k]
+
+    if len(candidate_features) == 0:
+        return None
+
+    Y = tmp_df[label_col].values.astype(np.int32)
+    cardinality_correction = 'randomized' in getattr(args, 'heuristic', '')
+    sampling_ratio = np.float32(getattr(args, 'mi_stratified_sampling_ratio', 1.0))
+
+    # Precompute encoded feature arrays
+    feature_arrays = {}
+    for f in candidate_features:
+        feature_arrays[f] = tmp_df[f].values.astype(np.int32)
+
+    # Greedy: first feature = highest pairwise MI with label
+    best_first = candidate_features[0]
+    selected = [best_first]
+    remaining = set(candidate_features) - {best_first}
+
+    # Running JMI scores: accumulate I(X_k; Y | X_j) incrementally.
+    # When X_j is newly selected, compute I(X_k; Y | X_j) for all remaining X_k
+    # and add to their running total. This avoids recomputing past contributions.
+    running_scores = {f: 0.0 for f in remaining}
+
+    # Initialize: compute I(X_k; Y | X_0) for all remaining X_k
+    for xk in remaining:
+        running_scores[xk] = float(
+            ranking_mi_numba_cmi.conditional_mutual_info_numba(
+                Y, feature_arrays[xk], feature_arrays[best_first],
+                sampling_ratio, cardinality_correction,
+            ),
+        )
+
+    while remaining and len(selected) < len(candidate_features):
+        # Pick the candidate with highest accumulated JMI score
+        best_feat = max(remaining, key=lambda f: running_scores[f])
+        selected.append(best_feat)
+        remaining.discard(best_feat)
+
+        if not remaining:
+            break
+
+        # Update running scores: add I(X_k; Y | X_{newly selected}) for all remaining
+        for xk in remaining:
+            cmi_val = float(
+                ranking_mi_numba_cmi.conditional_mutual_info_numba(
+                    Y, feature_arrays[xk], feature_arrays[best_feat],
+                    sampling_ratio, cardinality_correction,
+                ),
+            )
+            running_scores[xk] += cmi_val
+
+    return pd.DataFrame({'Feature': selected, 'JMI_Ranking': range(1, len(selected) + 1)})
+
+
+def compute_interaction_information_for_pairs(tmp_df: pd.DataFrame, args: Any, pairwise_mi_dict: dict | None = None, top_k: int = 30) -> pd.DataFrame | None:
+    """Compute II(X_i, X_j; Y) for all pairs among top-k features.
+
+    Negative II = synergy, Positive II = redundancy.
+    """
+    if not cmi_available:
+        logger.warning('CMI module not available, skipping interaction information')
+        return None
+
+    label_col = args.label_column
+    if label_col not in tmp_df.columns:
+        return None
+
+    feature_cols = [c for c in tmp_df.columns if c != label_col]
+
+    # Clamp top_k to available features
+    top_k = min(top_k, len(feature_cols))
+
+    # Screen to top-k by pairwise MI (exclude label from candidates)
+    if pairwise_mi_dict is not None:
+        feature_scores = {}
+        for (fa, fb), score in pairwise_mi_dict.items():
+            if fb == label_col and fa != label_col:
+                feature_scores[fa] = max(feature_scores.get(fa, -np.inf), score)
+            if fa == label_col and fb != label_col:
+                feature_scores[fb] = max(feature_scores.get(fb, -np.inf), score)
+        ranked = sorted(feature_scores.items(), key=lambda x: x[1], reverse=True)
+        candidate_features = [f for f, _ in ranked[:top_k] if f in tmp_df.columns]
+    else:
+        candidate_features = feature_cols[:top_k]
+
+    if len(candidate_features) < 2:
+        return None
+
+    Y = tmp_df[label_col].values.astype(np.int32)
+    sampling_ratio = getattr(args, 'mi_stratified_sampling_ratio', 1.0)
+    cardinality_correction = 'randomized' in getattr(args, 'heuristic', '')
+
+    feature_arrays = {}
+    for f in candidate_features:
+        feature_arrays[f] = tmp_df[f].values.astype(np.int32)
+
+    rows = []
+    for i in range(len(candidate_features)):
+        for j in range(i + 1, len(candidate_features)):
+            fi, fj = candidate_features[i], candidate_features[j]
+            ii = ranking_mi_numba_cmi.interaction_information_numba(
+                Y, feature_arrays[fi], feature_arrays[fj],
+                np.float32(sampling_ratio), cardinality_correction,
+            )
+            rows.append((fi, fj, ii))
+
+    return pd.DataFrame(rows, columns=['FeatureA', 'FeatureB', 'InteractionInfo'])
 
 def initialize_classifier(surrogate_model: str, n_dim: int) -> Any:
 

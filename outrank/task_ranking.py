@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import gzip
 import json
 import logging
 import os
@@ -9,7 +10,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import gzip
 import zstandard as zstd
 
 from outrank.algorithms.importance_estimator import rank_features_3MR
@@ -45,6 +45,12 @@ def outrank_task_conduct_ranking(args: Any) -> None:
 
     dataset_info = get_dataset_info(args)
 
+    if args.label_column not in dataset_info.column_names:
+        raise ValueError(
+            f"Label column '{args.label_column}' not found in dataset columns: "
+            f'{dataset_info.column_names}',
+        )
+
     for arg in vars(args):
         logging.info(f'{arg} set to: {getattr(args, arg)}')
 
@@ -63,98 +69,99 @@ def outrank_task_conduct_ranking(args: Any) -> None:
     global_bounds_storage = []
     global_memory_storage = []
     all_timings = []
-    # Traverse the batches
-    for raw_dump in glob.glob(dataset_info.data_path):
-
-        if (
-            args.data_source == 'ob-vw'
-            or args.data_source == 'ob-csv'
-            or args.data_source == 'csv-raw'
-            or args.data_source == 'ob-raw-dump'
-        ):
-            all_subfiles = [raw_dump]
-
-        for partial_data in all_subfiles:
-            cmd_arguments = {
-                'input_file': partial_data,
-                'fw_col_mapping': dataset_info.fw_map,
-                'column_descriptions': dataset_info.column_names,
-                'numeric_column_types': dataset_info.column_types,
-                'args': args,
-                'data_encoding': dataset_info.encoding,
-                'cpu_pool': GLOBAL_CPU_POOL,
-                'delimiter': dataset_info.col_delimiter,
-                'logger': logging,
-            }
+    try:
+        # Traverse the batches
+        for raw_dump in glob.glob(dataset_info.data_path):
 
             if (
-                args.data_source == 'ob-csv'
-                or args.data_source == 'ob-vw'
+                args.data_source == 'ob-vw'
+                or args.data_source == 'ob-csv'
                 or args.data_source == 'csv-raw'
                 or args.data_source == 'ob-raw-dump'
             ):
-                (
-                    checkpoint_timings,
-                    mutual_information_estimates,
-                    cardinality_object,
-                    bounds_object_storage,
-                    memory_object_storage,
-                    coverage_object,
-                    RARE_VALUE_STORAGE,
-                    GLOBAL_PRIOR_COMB_COUNTS,
-                    GLOBAL_ITEM_COUNTS,
-                ) = estimate_importances_minibatches(**cmd_arguments)
+                all_subfiles = [raw_dump]
 
-            global_bounds_storage += bounds_object_storage
-            global_memory_storage += memory_object_storage
-            all_timings += checkpoint_timings
+            for partial_data in all_subfiles:
+                cmd_arguments = {
+                    'input_file': partial_data,
+                    'fw_col_mapping': dataset_info.fw_map,
+                    'column_descriptions': dataset_info.column_names,
+                    'numeric_column_types': dataset_info.column_types,
+                    'args': args,
+                    'data_encoding': dataset_info.encoding,
+                    'cpu_pool': GLOBAL_CPU_POOL,
+                    'delimiter': dataset_info.col_delimiter,
+                    'logger': logging,
+                }
 
-            if cardinality_object is None:
-                continue
+                if (
+                    args.data_source == 'ob-csv'
+                    or args.data_source == 'ob-vw'
+                    or args.data_source == 'csv-raw'
+                    or args.data_source == 'ob-raw-dump'
+                ):
+                    batch_result = estimate_importances_minibatches(**cmd_arguments)
+                    checkpoint_timings = batch_result.step_timing_checkpoints
+                    mutual_information_estimates = batch_result.mutual_information_estimates
+                    cardinality_object = batch_result.cardinality_object
+                    bounds_object_storage = batch_result.bounds_object_storage
+                    memory_object_storage = batch_result.memory_object_storage
+                    coverage_object = batch_result.coverage_object
+                    RARE_VALUE_STORAGE = batch_result.rare_value_storage
+                    GLOBAL_PRIOR_COMB_COUNTS = batch_result.prior_comb_counts
+                    GLOBAL_ITEM_COUNTS = batch_result.item_counts
+                    jmi_ranking_result = batch_result.jmi_ranking
+                    interaction_info_result = batch_result.interaction_info
 
-            if coverage_object is None:
-                continue
+                global_bounds_storage += bounds_object_storage
+                global_memory_storage += memory_object_storage
+                all_timings += checkpoint_timings
 
-            if mutual_information_estimates is not None:
-                global_mutual_information_estimates.append(
-                    mutual_information_estimates,
+                if cardinality_object is None:
+                    continue
+
+                if coverage_object is None:
+                    continue
+
+                if mutual_information_estimates is not None:
+                    global_mutual_information_estimates.append(
+                        mutual_information_estimates,
+                    )
+
+        if args.task == 'identify_rare_values':
+            logging.info('Summarizing rare values ..')
+            summarize_rare_counts(
+                RARE_VALUE_STORAGE, args, cardinality_object, dataset_info,
+            )
+            exit()
+
+        if args.task == 'feature_summary_transformers':
+            summarize_feature_bounds_for_transformers(
+                bounds_object_storage,
+                dataset_info.column_types,
+                args.task,
+                args.label_column,
+            )
+            exit()
+        else:
+            summary_of_numeric_features = summarize_feature_bounds_for_transformers(
+                bounds_object_storage,
+                dataset_info.column_types,
+                args.task,
+                args.label_column,
+                output_summary_table_only=True,
+            )
+            if summary_of_numeric_features is not None:
+                num_out = os.path.join(
+                    args.output_folder, 'numeric_feature_statistics.tsv',
                 )
-
-    if args.task == 'identify_rare_values':
-        logging.info('Summarizing rare values ..')
-        summarize_rare_counts(
-            RARE_VALUE_STORAGE, args, cardinality_object, dataset_info,
-        )
-        exit()
-
-    if args.task == 'feature_summary_transformers':
-        summarize_feature_bounds_for_transformers(
-            bounds_object_storage,
-            dataset_info.column_types,
-            args.task,
-            args.label_column,
-        )
-        exit()
-    else:
-        summary_of_numeric_features = summarize_feature_bounds_for_transformers(
-            bounds_object_storage,
-            dataset_info.column_types,
-            args.task,
-            args.label_column,
-            output_summary_table_only=True,
-        )
-        if summary_of_numeric_features is not None:
-            num_out = os.path.join(
-                args.output_folder, 'numeric_feature_statistics.tsv',
-            )
-            summary_of_numeric_features.to_csv(num_out, sep='\t', index=False)
-            logging.info(
-                f'Stored statistics of numeric features to {num_out} ..',
-            )
-
-    # Just in case.
-    GLOBAL_CPU_POOL.close()
-    GLOBAL_CPU_POOL.join()
+                summary_of_numeric_features.to_csv(num_out, sep='\t', index=False)
+                logging.info(
+                    f'Stored statistics of numeric features to {num_out} ..',
+                )
+    finally:
+        GLOBAL_CPU_POOL.terminate()
+        GLOBAL_CPU_POOL.join()
 
     if len(global_mutual_information_estimates) == 0:
         logging.info('No rankings were obtained, exiting ..')
@@ -296,11 +303,30 @@ def outrank_task_conduct_ranking(args: Any) -> None:
     dfx.to_json(f'{args.output_folder}/timings.json')
     write_json_dump_to_file(args, f'{args.output_folder}/arguments.json')
 
+    # Write JMI rankings (last batch — JMI is deterministic per encoded batch)
+    if jmi_ranking_result is not None:
+        jmi_path = os.path.join(args.output_folder, 'jmi_feature_ranking.tsv')
+        jmi_ranking_result.to_csv(jmi_path, sep='\t', index=False)
+        logging.info(f'JMI feature ranking written to {jmi_path}')
+
+    # Write interaction information
+    # Sign convention: Jakulin & Bratko — negative II = synergy, positive = redundancy
+    if interaction_info_result is not None:
+        ii_path = os.path.join(args.output_folder, 'interaction_information.tsv')
+        interaction_info_result.to_csv(ii_path, sep='\t', index=False)
+        logging.info(
+            f'Interaction information written to {ii_path} '
+            '(negative II = synergy, positive = redundancy)',
+        )
+
     logging.info(
         f'Finished with ranking! Result stored as: {args.output_folder}/pairwise_ranks.tsv. Cleaning up tmp files ..',
     )
 
-    os.remove('ranking_checkpoint_tmp.tsv')
+    try:
+        os.remove('ranking_checkpoint_tmp.tsv')
+    except FileNotFoundError:
+        pass
 
 def identify_data_file_type(data_path):
     all_files  = set(list(glob.glob(os.path.join(data_path, '*'))))

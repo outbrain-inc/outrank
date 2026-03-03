@@ -1,11 +1,13 @@
 from __future__ import annotations
+
 import numpy as np
-from numba import njit, prange
+from numba import njit
+from numba import prange
 
 np.random.seed(123)
 
 
-@njit('Tuple((int32[:], int32[:]))(int32[:])', cache=True, fastmath=True)
+@njit('Tuple((int32[:], int32[:]))(int32[:])', cache=True, fastmath=True, boundscheck=False)
 def numba_unique(a):
     """
     Identify unique elements and their counts in a non-negative integer array.
@@ -24,7 +26,7 @@ def numba_unique(a):
     return unique_values, unique_counts
 
 
-@njit('float32(float32, int32, uint32[:])', cache=True, fastmath=True)
+@njit('float32(float32, int32, uint32[:])', cache=True, fastmath=True, boundscheck=False)
 def compute_conditional_entropy(initial_prob, group_size, class_counts):
     """
     Calculates the contribution to conditional entropy for a single group.
@@ -41,7 +43,7 @@ def compute_conditional_entropy(initial_prob, group_size, class_counts):
     return ce
 
 
-@njit('Tuple((int32[:], int32[:], int32[:], int32[:]))(int32[:])', cache=True, fastmath=True)
+@njit('Tuple((int32[:], int32[:], int32[:], int32[:]))(int32[:])', cache=True, fastmath=True, boundscheck=False)
 def build_groups(X):
     """
     Pre-processes X to create an efficient grouping structure.
@@ -86,6 +88,7 @@ def build_groups(X):
     'float32(int32[:], int32, int32[:], int32[:], int32[:], int32[:], b1)',
     cache=True,
     fastmath=True,
+    boundscheck=False,
 )
 def compute_entropies_grouped(
     Y, all_events,
@@ -159,51 +162,259 @@ def compute_entropies_grouped(
     if not cardinality_correction:
         return full_entropy - conditional_entropy
     else:
-        return -conditional_entropy + background_cond_entropy
+        # CC estimates can go slightly negative due to finite-sample noise;
+        # MI is non-negative by definition, so clamp to zero.
+        result = -conditional_entropy + background_cond_entropy
+        if result < np.float32(0.0):
+            return np.float32(0.0)
+        return result
 
 
 @njit(
-    'Tuple((int32[:], int32[:]))(int32[:], int32[:], float32, int32[:])',
+    'float32(int32[:], int32[:], int32, int32, int32)',
     cache=True,
-    fastmath=True
+    fastmath=True,
+    boundscheck=False,
 )
-def stratified_subsampling(Y, X, approximation_factor, _f_values_X):
+def _compute_mi_contingency(Y, X, all_events, dx, dy):
+    """MI(X;Y) via contingency table — single-pass count accumulation.
+
+    Builds flat count arrays count[x,y], count[x], count[y] in one pass,
+    then computes MI = sum p(x,y) * log(p(x,y) / (p(x)*p(y))) over
+    non-zero entries. ~2x faster than grouped approach for moderate
+    cardinality because it avoids build_groups overhead and per-group
+    histogram clearing.
+
+    Only used when cardinality_correction is False and dx*dy <= 2M.
     """
-    More efficient subsampling that avoids repeated np.where scans.
+    count_xy = np.zeros(dx * dy, dtype=np.int32)
+    count_x = np.zeros(dx, dtype=np.int32)
+    count_y = np.zeros(dy, dtype=np.int32)
+
+    for i in range(all_events):
+        x, y = X[i], Y[i]
+        count_xy[x * dy + y] += 1
+        count_x[x] += 1
+        count_y[y] += 1
+
+    inv_n = np.float32(1.0) / np.float32(all_events)
+    mi = np.float32(0.0)
+
+    # Dense iteration with branch-skip for zero entries. For the no-CC path
+    # (single pass), this is already optimal — sparse collection overhead
+    # negates any benefit. Sparse is only worthwhile for the CC path which
+    # iterates the table twice (see _compute_mi_contingency_cc).
+    for x in range(dx):
+        nx = count_x[x]
+        if nx == 0:
+            continue
+        x_off = x * dy
+        for y in range(dy):
+            nxy = count_xy[x_off + y]
+            if nxy == 0:
+                continue
+            ny = count_y[y]
+            mi += np.float32(nxy) * inv_n * np.log(
+                (np.float32(nxy) * np.float32(all_events))
+                / (np.float32(nx) * np.float32(ny)),
+            )
+
+    return mi
+
+
+@njit(
+    'Tuple((float32, float32))(int32[:], int32[:], int32[:], int32[:], int32, int32, float32)',
+    cache=True,
+    fastmath=True,
+    boundscheck=False,
+)
+def _cc_sparse_entropies(count_xy, count_xy_spoofed, count_x, count_y, dx, dy, inv_n):
+    """Sparse iteration for CC path — extracted to keep _compute_mi_contingency_cc
+    small so LLVM doesn't spill registers on the dense fast path."""
+    table_size = dx * dy
+    cond_entropy = np.float32(0.0)
+    bg_cond_entropy = np.float32(0.0)
+
+    # Real table: collect non-zero entries
+    nnz_real = np.int32(0)
+    for k in range(table_size):
+        if count_xy[k] > 0:
+            nnz_real += 1
+    nz_x_r = np.empty(nnz_real, dtype=np.int32)
+    nz_nxy_r = np.empty(nnz_real, dtype=np.int32)
+    idx = np.int32(0)
+    for x in range(dx):
+        x_off = x * dy
+        for y in range(dy):
+            c = count_xy[x_off + y]
+            if c > 0:
+                nz_x_r[idx] = x
+                nz_nxy_r[idx] = c
+                idx += 1
+
+    for k in range(nnz_real):
+        nxy = nz_nxy_r[k]
+        nx = count_x[nz_x_r[k]]
+        if nx <= 1:
+            continue
+        px = np.float32(nx) * inv_n
+        inv_nx = np.float32(1.0) / np.float32(nx)
+        p_y_given_x = np.float32(nxy) * inv_nx
+        cond_entropy -= px * p_y_given_x * np.log(p_y_given_x)
+
+    # Spoofed table
+    nnz_spoof = np.int32(0)
+    for k in range(table_size):
+        if count_xy_spoofed[k] > 0:
+            nnz_spoof += 1
+    nz_x_s = np.empty(nnz_spoof, dtype=np.int32)
+    nz_nxy_s = np.empty(nnz_spoof, dtype=np.int32)
+    idx = np.int32(0)
+    for x in range(dx):
+        x_off = x * dy
+        for y in range(dy):
+            c = count_xy_spoofed[x_off + y]
+            if c > 0:
+                nz_x_s[idx] = x
+                nz_nxy_s[idx] = c
+                idx += 1
+
+    for k in range(nnz_spoof):
+        nxy_s = nz_nxy_s[k]
+        nx = count_x[nz_x_s[k]]
+        if nx <= 1:
+            continue
+        px = np.float32(nx) * inv_n
+        inv_nx = np.float32(1.0) / np.float32(nx)
+        p_y_given_x_s = np.float32(nxy_s) * inv_nx
+        bg_cond_entropy -= px * p_y_given_x_s * np.log(p_y_given_x_s)
+
+    return cond_entropy, bg_cond_entropy
+
+
+@njit(
+    'float32(int32[:], int32[:], int32, int32, int32)',
+    cache=True,
+    fastmath=True,
+    boundscheck=False,
+)
+def _compute_mi_contingency_cc(Y, X, all_events, dx, dy):
+    """MI(X;Y) with cardinality correction via contingency table.
+
+    Computes H_bg(Y|X) - H(Y|X) where H_bg uses spoofed Y assignment:
+    Y_spoofed[i] = Y[(i + count_x[X[i]]) % n]. Sparse iteration extracted
+    to _cc_sparse_entropies to avoid LLVM register spill on the dense path.
+    """
+    n = all_events
+
+    # Pass 1: build real contingency table and marginals
+    count_xy = np.zeros(dx * dy, dtype=np.int32)
+    count_x = np.zeros(dx, dtype=np.int32)
+    count_y = np.zeros(dy, dtype=np.int32)
+
+    for i in range(n):
+        x, y = X[i], Y[i]
+        count_xy[x * dy + y] += 1
+        count_x[x] += 1
+        count_y[y] += 1
+
+    # Pass 2: build spoofed contingency table
+    count_xy_spoofed = np.zeros(dx * dy, dtype=np.int32)
+
+    for i in range(n):
+        x = X[i]
+        spoofed_idx = (i + count_x[x]) % n
+        y_spoofed = Y[spoofed_idx]
+        count_xy_spoofed[x * dy + y_spoofed] += 1
+
+    inv_n = np.float32(1.0) / np.float32(n)
+    table_size = dx * dy
+
+    if table_size > 4 * n:
+        cond_entropy, bg_cond_entropy = _cc_sparse_entropies(
+            count_xy, count_xy_spoofed, count_x, count_y, dx, dy, inv_n,
+        )
+    else:
+        cond_entropy = np.float32(0.0)
+        bg_cond_entropy = np.float32(0.0)
+        for x in range(dx):
+            nx = count_x[x]
+            if nx <= 1:
+                continue
+            px = np.float32(nx) * inv_n
+            inv_nx = np.float32(1.0) / np.float32(nx)
+            x_off = x * dy
+            for y in range(dy):
+                nxy = count_xy[x_off + y]
+                if nxy > 0:
+                    p_y_given_x = np.float32(nxy) * inv_nx
+                    cond_entropy -= px * p_y_given_x * np.log(p_y_given_x)
+
+        for x in range(dx):
+            nx = count_x[x]
+            if nx <= 1:
+                continue
+            px = np.float32(nx) * inv_n
+            inv_nx = np.float32(1.0) / np.float32(nx)
+            x_off = x * dy
+            for y in range(dy):
+                nxy_s = count_xy_spoofed[x_off + y]
+                if nxy_s > 0:
+                    p_y_given_x_s = np.float32(nxy_s) * inv_nx
+                    bg_cond_entropy -= px * p_y_given_x_s * np.log(p_y_given_x_s)
+
+    # CC estimates can go slightly negative; MI is non-negative by definition.
+    result = -cond_entropy + bg_cond_entropy
+    if result < np.float32(0.0):
+        return np.float32(0.0)
+    return result
+
+
+@njit(
+    'Tuple((int32[:], int32[:]))(int32[:], int32[:], float32, int32[:], int32[:], int32[:], int32[:])',
+    cache=True,
+    fastmath=True,
+    boundscheck=False,
+)
+def stratified_subsampling(Y, X, approximation_factor, f_values, f_counts, group_starts, positions):
+    """O(n) stratified subsampling using pre-built group structure.
+
+    Takes at most `samples_per_val` original indices from each group via
+    the positions array (already partitioned by build_groups), avoiding
+    any per-value linear scan of X.
     """
     all_events = X.size
     final_space_size = int(approximation_factor * all_events)
-    if _f_values_X.size == 0:
+    n_groups = f_values.size
+    if n_groups == 0:
         return Y, X
-    unique_samples_per_val = int(final_space_size / _f_values_X.size)
-    if unique_samples_per_val == 0:
+    samples_per_val = int(final_space_size / n_groups)
+    if samples_per_val == 0:
         return Y, X
 
     final_index_array = np.empty(final_space_size, dtype=np.int32)
-    index_offset = 0
+    offset = 0
 
-    for fval in _f_values_X:
-        count_collected = 0
-        for j in range(X.size):
-            if X[j] == fval:
-                if count_collected < unique_samples_per_val:
-                    if index_offset < final_space_size:
-                        final_index_array[index_offset] = j
-                        index_offset += 1
-                    count_collected += 1
-                else:
-                    break
+    for gi in range(n_groups):
+        start = group_starts[gi]
+        take = min(samples_per_val, f_counts[gi])
+        if offset + take > final_space_size:
+            take = final_space_size - offset
+        for j in range(take):
+            final_index_array[offset] = positions[start + j]
+            offset += 1
+        if offset >= final_space_size:
+            break
 
-    final_index_array = final_index_array[:index_offset]
-    X_sub = X[final_index_array]
-    Y_sub = Y[final_index_array]
-    return Y_sub, X_sub
+    final_index_array = final_index_array[:offset]
+    return Y[final_index_array], X[final_index_array]
 
 
 @njit(
     'float32(int32[:], int32[:], float32, b1)',
     cache=True,
     fastmath=True,
+    boundscheck=False,
 )
 def mutual_info_estimator_numba_opt(
     Y, X, approximation_factor=1.0, cardinality_correction=False,
@@ -212,35 +423,55 @@ def mutual_info_estimator_numba_opt(
     The heuristic is MI-numba-randomized, but the code for numba is structured so the execution is faster.
     Core estimator logic. This version uses the efficient grouped approach.
     """
-    
+
     if X.size != Y.size:
-        raise ValueError("Input arrays X and Y must have the same length.")
+        raise ValueError('Input arrays X and Y must have the same length.')
     if X.size == 0:
-        raise ValueError("Input arrays cannot be empty.")
-    
+        raise ValueError('Input arrays cannot be empty.')
+
     all_events = X.size
 
+    # Separate diagonal check (early exit) + max-value scan.
+    # Fusing adds ~25% per-iteration overhead from the extra branch, which
+    # hurts the common case (non-diagonal pairs where diagonal exits at i≈0).
     is_diagonal = True
-    if X.size == Y.size:
-        for i in range(X.size):
-            if X[i] != Y[i]:
-                is_diagonal = False
-                break
-    else:
-        is_diagonal = False
+    for i in range(all_events):
+        if X[i] != Y[i]:
+            is_diagonal = False
+            break
 
     if is_diagonal:
         cardinality_correction = False
 
-    if approximation_factor < 1.0:
-        f_values_full, _ = numba_unique(X)
-        Y, X = stratified_subsampling(Y, X, approximation_factor, f_values_full)
-        all_events = X.size
+    # Fast path: when no subsampling needed, try contingency table dispatch
+    # *before* paying the cost of build_groups (~100-220us).
+    if approximation_factor >= 1.0:
+        dx = np.int32(0)
+        dy = np.int32(0)
+        for i in range(all_events):
+            if X[i] > dx:
+                dx = X[i]
+            if Y[i] > dy:
+                dy = Y[i]
+        dx += np.int32(1)
+        dy += np.int32(1)
+        if np.int64(dx) * np.int64(dy) <= np.int64(2_000_000):
+            if not cardinality_correction:
+                return _compute_mi_contingency(Y, X, all_events, dx, dy)
+            else:
+                return _compute_mi_contingency_cc(Y, X, all_events, dx, dy)
 
+    # Slow path: subsampling or high-cardinality fallback — needs build_groups
     f_values, f_counts, group_starts, positions = build_groups(X)
 
+    if approximation_factor < 1.0:
+        Y, X = stratified_subsampling(Y, X, approximation_factor, f_values, f_counts, group_starts, positions)
+        all_events = X.size
+        # Rebuild groups on the subsampled data
+        f_values, f_counts, group_starts, positions = build_groups(X)
+
     joint_entropy_core = compute_entropies_grouped(
-        Y, all_events, f_values, f_counts, group_starts, positions, cardinality_correction
+        Y, all_events, f_values, f_counts, group_starts, positions, cardinality_correction,
     )
 
     return approximation_factor * joint_entropy_core

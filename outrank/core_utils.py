@@ -85,6 +85,29 @@ class BatchRankingSummary:
 
     triplet_scores: list[tuple[str, str, float]]
     step_times: dict[str, Any]
+    jmi_ranking: Any = None
+    interaction_info: Any = None
+
+
+@dataclass
+class MinibatchResult:
+    """Structured return type for estimate_importances_minibatches.
+
+    Replaces the 11-element positional tuple to make the return contract
+    explicit and reduce indexing errors at the call site.
+    """
+
+    step_timing_checkpoints: list[dict[str, Any]]
+    mutual_information_estimates: Any  # pd.DataFrame | None
+    cardinality_object: dict[Any, Any]
+    bounds_object_storage: list[dict[str, Any]]
+    memory_object_storage: list[dict[str, Any]]
+    coverage_object: Any  # defaultdict[str, list]
+    rare_value_storage: dict[str, Any]
+    prior_comb_counts: dict[Any, int]
+    item_counts: dict[str, Any]
+    jmi_ranking: Any = None  # pd.DataFrame | None
+    interaction_info: Any = None  # pd.DataFrame | None
 
 
 def display_random_tip() -> None:

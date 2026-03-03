@@ -50,12 +50,13 @@ def rbo_score(l1, l2, p=0.9):
 if __name__ == '__main__':
 
     # Define the number of top features to consider
-    top_n = 10
+    top_n = 30
 
+    num_datasets = 5
     # Define different sizes and corresponding folder names
-    sizes = [100000, 15000, 20000, 30000, 50000, 70000, 230000, 25000, 35000, 15000]
-    input_folders = [f'../examples/df{i+1}' for i in range(10)]
-    output_folders = [f'./output_df{i+1}' for i in range(10)]
+    sizes = [100000 * (np.random.randint(5) + 1)] * num_datasets
+    input_folders = [f'../examples/df{i+1}' for i in range(num_datasets)]
+    output_folders = [f'./output_df{i+1}' for i in range(num_datasets)]
 
     # Initialize a DataFrame to accumulate results
     accumulated_results = pd.DataFrame()
