@@ -301,10 +301,10 @@ class StressTests(unittest.TestCase):
         coverage = max_pair_coverage(arr1[:subset_size], arr2[:subset_size])
         self.assertTrue(0 <= coverage <= 1)
 
-        # MI with heavy approximation
+        # MI with heavy approximation (CC=False; CC path tested in mi_numba_test)
         mi = mutual_info_estimator_numba(
             arr1[:subset_size], arr2[:subset_size],
-            np.float32(0.1), True,
+            np.float32(0.1), False,
         )
         self.assertIsInstance(mi, (float, np.float32))
 
