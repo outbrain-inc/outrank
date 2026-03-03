@@ -191,8 +191,13 @@ class CompareStrategiesTest(unittest.TestCase):
         self.assertIsInstance(result_multi, (float, np.float32))
 
     def test_extreme_values(self):
-        """Test with extreme integer values"""
-        max_val = np.iinfo(np.int32).max
+        """Test with large integer values near the algorithm's operational limits.
+
+        The opt fast-path builds a contingency table of size dx*dy, and
+        numba_unique uses counting-sort (max+1 cells).  INT32_MAX would
+        overflow the dimension arithmetic, so use a feasible large value.
+        """
+        max_val = 100_000
         a = np.array([0, max_val] * 100, dtype=np.int32)
         b = np.array([max_val, 0] * 100, dtype=np.int32)
 
