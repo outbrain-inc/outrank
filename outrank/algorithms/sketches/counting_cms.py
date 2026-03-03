@@ -9,7 +9,7 @@ from numba import prange
 
 @njit
 def cms_hash(x, seed, width):
-    x_hash = np.uint32(hash(x))
+    x_hash = np.uint32(hash(x) & 0xFFFFFFFF)
     return (x_hash + seed) % width
 
 class CountMinSketch:
